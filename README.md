@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![MuHack](https://img.shields.io/badge/Made%20by-MuHack%20Brescia-e63946?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9IndoaXRlIiBmb250LWZhbWlseT0ibW9ub3NwYWNlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIj5NPC90ZXh0Pjwvc3ZnPg==)](https://muhack.org)
 
-**WiFi-controlled quadruped robot with OLED display, captive portal, and exclusive hack-lock system**
+**WiFi-controlled quadruped robot with OLED display and captive portal**
 
 [Features](#-features-added-in-muhack-edition) • [Quick Start](#-quick-start) • [Documentation](#-technical-documentation) • [API](#-api-reference) • [Credits](#-credits)
 
@@ -20,7 +20,6 @@
 This is a **customized version** of the [Sesame Robot by Dorian Todd](https://github.com/dorianborian/sesame-robot), enhanced for the **MuHack Brescia** community with:
 
 - ✅ **PlatformIO** build system (no Arduino IDE needed)
-- ✅ **Hack Lock System** for exclusive control during workshops
 - ✅ **Browser-based Terminal** with command-line interface
 - ✅ **MuHack-themed UI** with custom branding
 - ✅ **Enhanced documentation** and developer experience
@@ -33,43 +32,19 @@ This is a **customized version** of the [Sesame Robot by Dorian Todd](https://gi
 
 ## 🎯 Features Added in MuHack Edition
 
-### 🔐 Hack Lock System
-
-A unique **exclusive control mechanism** perfect for workshops and events:
-
-```bash
-# In browser terminal or via API
-hack      # Take exclusive control - locks out all other users
-muhack    # Release control - restore multi-user access
-```
-
-**How it works**:
-
-- When a user executes `hack`, the robot locks to their IP address
-- All other users receive `ACCESS DENIED` on any command
-- Only the "hacker" can release control with `muhack`
-- Perfect for demos, presentations, or controlled access scenarios
-
-**Implementation**: See [`handleTerminalCmd()`](src/main.cpp#L247-L315) and [`isHackBlocked()`](src/main.cpp#L231)
-
----
-
-### 💻 Integrated Browser Terminal
+### Integrated Browser Terminal
 
 Full command-line interface accessible directly from the web UI:
 
 - **Real-time command execution** with history (↑/↓ arrows)
-- **Visual lock indicator** shows hack status
-- **Color-coded responses**: green for success, red for errors, special colors for hack/muhack
+- **Color-coded responses**: green for success, red for errors
 - **Complete command set**: movement, poses, system status
 
 **Commands**:
 
 ```
-status    - Show robot info, IP, current command, lock status
+status    - Show robot info, IP, current command
 help      - List all available commands
-hack      - Take exclusive control
-muhack    - Release control
 forward, backward, left, right, stop
 rest, stand, wave, dance, swim, point, pushup, bow, cute, freaky, worm, shake, shrug, dead, crab
 ```
@@ -143,14 +118,13 @@ This README includes:
 6. [Face Animation System](#5-face-animation-system)
 7. [Network Stack](#6-network-stack)
 8. [HTTP API & Web Interface](#7-http-api--web-interface)
-9. [Hack Lock System](#8-hack-lock-system-new)
-10. [Terminal Interface](#9-terminal-interface-new)
-11. [Serial CLI](#10-serial-cli)
-12. [Main Loop & State Machine](#11-main-loop--state-machine)
-13. [Testing the Web UI](#12-testing-the-web-ui-locally)
-14. [File Reference](#13-file-reference)
-15. [Future Development](#14-future-development-ideas)
-16. [Credits](#-credits)
+9. [Terminal Interface](#8-terminal-interface-new)
+10. [Serial CLI](#9-serial-cli)
+11. [Main Loop & State Machine](#10-main-loop--state-machine)
+12. [Testing the Web UI](#11-testing-the-web-ui-locally)
+13. [File Reference](#12-file-reference)
+14. [Future Development](#13-future-development-ideas)
+15. [Credits](#-credits)
 
 ---
 
@@ -546,104 +520,7 @@ curl "http://192.168.4.1/setSettings?frameDelay=150&walkCycles=15"
 
 ---
 
-## 8. Hack Lock System ⭐ NEW
-
-**Exclusive control mechanism** for workshops, demos, and controlled access scenarios.
-
-### Concept
-
-When a user "hacks" the robot, **all other users are locked out** until the hacker releases control. Perfect for:
-
-- **Workshop demos** where one instructor shows features
-- **Presentations** where audience can't interfere
-- **Competitive events** where one team controls at a time
-
-### State Variables
-
-```cpp
-bool hackLocked = false;        // Is the robot locked?
-IPAddress hackOwnerIP;          // IP address of the "hacker"
-String hackOwnerMAC = "";       // Reserved for future MAC-based tracking
-```
-
-### Implementation
-
-**Terminal Commands**:
-
-```bash
-hack      # Lock the robot to your IP
-muhack    # Release the lock (only works if you're the owner)
-```
-
-**API Integration**:
-
-- `handleTerminalCmd()` processes hack/muhack commands
-- `isHackBlocked()` checks if current request is blocked
-- Blocked requests receive HTTP 403 or JSON error response
-
-**Code Flow**:
-
-```cpp
-bool isHackBlocked() {
-  if (!hackLocked) return false;
-  IPAddress clientIP = server.client().remoteIP();
-  return (clientIP != hackOwnerIP);
-}
-
-// In handleTerminalCmd()
-if (cmdLower == "hack") {
-  hackLocked = true;
-  hackOwnerIP = clientIP;
-  return JSON("ACCESS GRANTED. You now have exclusive control.");
-}
-
-if (cmdLower == "muhack") {
-  if (hackLocked && clientIP == hackOwnerIP) {
-    hackLocked = false;
-    return JSON("LOCK RELEASED. All users can now control.");
-  }
-  return JSON("ERROR: Only the hacker who locked can release.");
-}
-
-// In all command handlers
-if (isHackBlocked()) {
-  return JSON("ACCESS DENIED. Robot is under exclusive control.");
-}
-```
-
-**UI Feedback**:
-
-- Terminal lock badge shows `LOCKED` (red, pulsing) or `UNLOCKED` (gray)
-- Lock badge defined in `captive-portal.h`:
-
-```html
-<span class="terminal-lock-badge" id="termLockBadge">UNLOCKED</span>
-```
-
-### Testing
-
-```bash
-# User A (via terminal)
-> hack
-ACCESS GRANTED. You now have exclusive control.
-
-# User B (different IP - via terminal or UI)
-> forward
-ACCESS DENIED. Robot is under exclusive control.
-
-# User A
-> muhack
-LOCK RELEASED. All users can now control the robot.
-```
-
-**Files**:
-
-- Implementation: [`src/main.cpp`](src/main.cpp#L85-L90) (state), [`src/main.cpp`](src/main.cpp#L231-L245) (check function), [`src/main.cpp`](src/main.cpp#L247-L315) (terminal handler)
-- UI: [`include/captive-portal.h`](include/captive-portal.h#L168-L203)
-
----
-
-## 9. Terminal Interface ⭐ NEW
+## 8. Terminal Interface
 
 **Browser-based command-line interface** integrated into the web UI.
 
@@ -652,8 +529,6 @@ LOCK RELEASED. All users can now control the robot.
 - **Real-time execution** with instant feedback
 - **Command history** with ↑/↓ arrow keys
 - **Color-coded output**:
-  - `hack` command: Red glow
-  - `muhack` command: Cyan glow
   - Errors: Red text
   - Success: White/green text
 - **Auto-scroll** to latest output
@@ -670,8 +545,7 @@ LOCK RELEASED. All users can now control the robot.
       <span class="terminal-dot yellow"></span>
       <span class="terminal-dot green"></span>
     </div>
-    <span class="terminal-title">muhack@sesame:~</span>
-    <span class="terminal-lock-badge" id="termLockBadge">UNLOCKED</span>
+    <span class="terminal-title">sesame@robot:~</span>
   </div>
   <div class="terminal-output" id="termOutput">
     <!-- Command history appears here -->
@@ -698,25 +572,22 @@ GET /terminal?cmd=status HTTP/1.1
 
 ```json
 {
-  "response": "IP: 192.168.4.1\nSSID: Sesame-Controller-BETA\n...",
-  "locked": false
+  "response": "IP: 192.168.4.1\nSSID: Sesame-Controller-BETA\n..."
 }
 ```
 
 ### Available Commands
 
-| Command                       | Description                                        | Output                         |
-| ----------------------------- | -------------------------------------------------- | ------------------------------ |
-| `status`                      | Show IP, SSID, clients, command, face, lock status | Multi-line info                |
-| `help`                        | List all commands                                  | Command reference              |
-| `hack`                        | Take exclusive control                             | Confirm + sets `locked: true`  |
-| `muhack`                      | Release control                                    | Confirm + sets `locked: false` |
-| `forward`                     | Move forward                                       | `Executing: forward`           |
-| `backward`                    | Move backward                                      | `Executing: backward`          |
-| `left`                        | Turn left                                          | `Executing: left`              |
-| `right`                       | Turn right                                         | `Executing: right`             |
-| `stop`                        | Stop all movement                                  | `All movement stopped.`        |
-| `rest`, `stand`, `wave`, etc. | Execute pose                                       | `Pose: <name>`                 |
+| Command                       | Description                           | Output                  |
+| ----------------------------- | ------------------------------------- | ----------------------- |
+| `status`                      | Show IP, SSID, clients, command, face | Multi-line info         |
+| `help`                        | List all commands                     | Command reference       |
+| `forward`                     | Move forward                          | `Executing: forward`    |
+| `backward`                    | Move backward                         | `Executing: backward`   |
+| `left`                        | Turn left                             | `Executing: left`       |
+| `right`                       | Turn right                            | `Executing: right`      |
+| `stop`                        | Stop all movement                     | `All movement stopped.` |
+| `rest`, `stand`, `wave`, etc. | Execute pose                          | `Pose: <name>`          |
 
 ### JavaScript Integration
 
@@ -736,9 +607,6 @@ function sendTerminalCmd(cmd) {
     .then((r) => r.json())
     .then((data) => {
       appendTermLine(data.response, getColorClass(cmd));
-      if (typeof data.locked !== "undefined") {
-        updateLockBadge(data.locked);
-      }
     });
 }
 ```
@@ -756,17 +624,6 @@ function sendTerminalCmd(cmd) {
   max-height: 200px;
   overflow-y: auto;
 }
-
-.hack-line {
-  color: #e63946;
-  text-shadow: 0 0 8px rgba(230, 57, 70, 0.5);
-  font-weight: 700;
-}
-
-.muhack-line {
-  color: #00d4ff;
-  text-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
-}
 ```
 
 **Files**:
@@ -776,7 +633,7 @@ function sendTerminalCmd(cmd) {
 
 ---
 
-## 10. Serial CLI
+## 9. Serial CLI
 
 The serial CLI runs at **115200 baud** inside `loop()`. It uses a 32-byte static ring buffer. Commands are newline-terminated.
 
@@ -810,7 +667,7 @@ The serial CLI runs at **115200 baud** inside `loop()`. It uses a 32-byte static
 
 ---
 
-## 11. Main Loop & State Machine
+## 10. Main Loop & State Machine
 
 ```
 loop()
@@ -838,7 +695,7 @@ loop()
 
 ---
 
-## 12. Testing the Web UI Locally
+## 11. Testing the Web UI Locally
 
 You can test and modify the web interface **without uploading to the robot**.
 
@@ -879,7 +736,6 @@ window.fetch = function (url, options) {
       json: () =>
         Promise.resolve({
           response: "Mock response from robot\nAll commands work offline!",
-          locked: false,
         }),
     });
   }
@@ -921,7 +777,7 @@ window.fetch = function (url, options) {
 
 ---
 
-## 13. File Reference
+## 12. File Reference
 
 ### `src/main.cpp`
 
@@ -977,7 +833,7 @@ Contains a single `const char index_html[]` PROGMEM string: the complete web con
 
 ---
 
-## 14. Future Development Ideas
+## 13. Future Development Ideas
 
 ### A. Logo / custom bitmap on startup
 
@@ -1092,7 +948,6 @@ Enhanced and maintained by **[MuHack Brescia](https://muhack.org)** - Brescia Ha
 **Key Contributors**:
 
 - Terminal system implementation
-- Hack Lock security mechanism
 - PlatformIO migration
 - MuHack branding and UI redesign
 - Enhanced documentation
