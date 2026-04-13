@@ -13,32 +13,29 @@
 
 // --- Access Point Configuration ---
 // This is the network the Robot will create
-#define AP_SSID "Sesame-Controller-BETA"
+#define AP_SSID "Sesame MuHack"
 #define AP_PASS "12345678" // Must be at least 8 characters
 
 // --- Station Mode Configuration (Optional) ---
 // Set these to connect to your home/office WiFi network
-// Leave NETWORK_SSID empty to disable station mode
+// Leave NETWORK_SSID empty or set ENABLE_NETWORK_MODE to false to disable
 #define NETWORK_SSID ""           // Your WiFi network name
 #define NETWORK_PASS ""           // Your WiFi password
 #define ENABLE_NETWORK_MODE false // Set to true to enable network connection attempts
+
+// Static IP for the Access Point (avoids softAPIP() hang on ESP32-S2)
+#define AP_IP IPAddress(192, 168, 4, 1)
+#define AP_GATEWAY IPAddress(192, 168, 4, 1)
+#define AP_SUBNET IPAddress(255, 255, 255, 0)
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
 #define OLED_I2C_ADDR 0x3C
 
-// I2C Pins for Distro Board V2
-// #define I2C_SDA 8
-// #define I2C_SCL 9
-
-// I2C Pins for Distro Board
-// #define I2C_SDA 21
-// #define I2C_SCL 22
-
 // I2C Pins for S2 Mini Board
-#define I2C_SDA 33
-#define I2C_SCL 35
+#define I2C_SDA 35
+#define I2C_SCL 33
 
 // DNS Server for Captive Portal
 DNSServer dnsServer;
@@ -531,41 +528,130 @@ void handleApiCommand()
   }
 }
 
+void displayBootMsg(const char *msg, bool clear = false)
+{
+  if (clear)
+  {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+  }
+  display.println(msg);
+  display.display();
+  Serial.println(msg);
+}
+
 void setup()
 {
   Serial.begin(115200);
+  delay(500); // Let USB CDC stabilize on S2 Mini
   randomSeed(micros());
 
   // I2C Init for ESP32
   Wire.begin(I2C_SDA, I2C_SCL);
 
-  // OLED Init
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR))
+  // OLED Init (non-blocking: robot works even without display)
+  bool displayOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
+  if (!displayOk)
   {
-    Serial.println(F("SSD1306 allocation failed."));
-    while (1)
-      ;
+    Serial.println(F("SSD1306 allocation failed - continuing without display."));
   }
 
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println(F("Setting up WiFi..."));
-  display.display();
+  if (displayOk)
+  {
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    displayBootMsg("Sesame MuHack Boot", false);
+  }
 
-  // --- WIFI CONFIGURATION ---
-  // Try to connect to network first if configured
+  // === ACCESS POINT ===
+  // ESP32-S2 + Arduino-ESP32 v3 reliable AP sequence:
+  //
+  // CRITICAL: WiFi.persistent(false) must be called first.
+  //   Arduino-ESP32 by default saves/loads WiFi credentials from NVS (flash).
+  //   If NVS is corrupted (e.g. from multiple firmware flashes), the IDF event
+  //   loop panics during softAP() and the watchdog resets the chip → reboot loop.
+  //   persistent(false) disables all NVS access for WiFi entirely.
+  //
+  // Sequence:
+  //   1. persistent(false) — disable NVS, must be FIRST
+  //   2. softAP()          — handles WiFi init and netif creation
+  //   3. delay(2000)       — S2 needs more time than S1 for netif to come up
+  //   4. softAPConfig()    — configure IP only after netif is ready
+  //   (never call softAPIP() — can hang on S2; use AP_IP constant instead)
+  if (displayOk)
+    displayBootMsg("Starting AP...");
+
+  IPAddress myIP = AP_IP; // Known static IP, never queried from driver
+
+  WiFi.persistent(false); // Disable NVS read/write — prevents crash on corrupted flash
+  WiFi.disconnect(true);  // Reset any leftover WiFi state from previous boot
+  delay(200);
+
+  Serial.println("Calling WiFi.softAP...");
+  bool apOk = WiFi.softAP(AP_SSID, AP_PASS);
+  Serial.print("softAP returned: ");
+  Serial.println(apOk ? "true" : "false");
+
+  if (apOk)
+  {
+    delay(2000);                                     // S2 netif needs ~2s to fully come up after softAP() returns
+    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET); // Set custom IP now that netif is ready
+    Serial.print("AP Created. SSID: ");
+    Serial.print(AP_SSID);
+    Serial.print("  IP: ");
+    Serial.println(myIP);
+    if (displayOk)
+    {
+      display.print("AP OK: ");
+      displayBootMsg(AP_SSID);
+    }
+  }
+  else
+  {
+    Serial.println("WARNING: AP failed, retrying...");
+    if (displayOk)
+      displayBootMsg("AP FAILED! Retrying...");
+    delay(1000);
+    apOk = WiFi.softAP(AP_SSID, AP_PASS);
+    Serial.print("softAP retry returned: ");
+    Serial.println(apOk ? "true" : "false");
+    if (apOk)
+    {
+      delay(500);
+      WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+      Serial.println("AP Created on retry.");
+      if (displayOk)
+        displayBootMsg("AP OK (retry)");
+    }
+    else
+    {
+      Serial.println("AP creation failed permanently. Robot will work offline.");
+      if (displayOk)
+        displayBootMsg("AP FAILED - offline mode");
+    }
+  }
+
+  // === OPTIONAL: Station mode (non-blocking) ===
   if (ENABLE_NETWORK_MODE && String(NETWORK_SSID).length() > 0)
   {
+    if (displayOk)
+      displayBootMsg("Connecting WiFi...");
     Serial.println("Attempting to connect to network: " + String(NETWORK_SSID));
-    WiFi.mode(WIFI_AP_STA); // Enable both AP and Station modes
-    WiFi.setHostname(deviceHostname.c_str());
+
+    // Switch to AP+STA mode — softAP() must be re-issued after mode change
+    WiFi.mode(WIFI_AP_STA);
+    delay(200);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    delay(500);
+    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+
     WiFi.begin(NETWORK_SSID, NETWORK_PASS);
 
-    // Wait up to 10 seconds for connection
+    // Non-blocking wait: max 5 seconds
     int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20)
+    while (WiFi.status() != WL_CONNECTED && attempts < 10)
     {
       delay(500);
       Serial.print(".");
@@ -579,28 +665,28 @@ void setup()
       Serial.println();
       Serial.print("Connected to network! IP: ");
       Serial.println(networkIP);
+      if (displayOk)
+      {
+        display.print("Net: ");
+        displayBootMsg(networkIP.toString().c_str());
+      }
     }
     else
     {
       Serial.println();
-      Serial.println("Failed to connect to network. Running in AP-only mode.");
-      WiFi.mode(WIFI_AP); // Fall back to AP-only
+      Serial.println("Network connection failed - AP still active, continuing.");
+      if (displayOk)
+        displayBootMsg("Net: skip (AP only)");
+      WiFi.disconnect(false); // Stop STA scanning, keep AP
     }
   }
   else
   {
-    WiFi.mode(WIFI_AP);
     Serial.println("Network mode disabled. Running in AP-only mode.");
   }
 
-  // --- ACCESS POINT CONFIGURATION ---
-  WiFi.softAP(AP_SSID, AP_PASS);
-  IPAddress myIP = WiFi.softAPIP();
-
-  Serial.print("AP Created. IP: ");
-  Serial.println(myIP);
-
   // Build WiFi info text for scrolling
+  // myIP is already set to the static AP_IP — no need to call softAPIP()
   if (networkConnected)
   {
     wifiInfoText = "AP: " + String(AP_SSID) + " (" + myIP.toString() + ")  |  Network: " + String(NETWORK_SSID) + " (" + networkIP.toString() + ") or " + deviceHostname + ".local  |  ";
@@ -619,40 +705,34 @@ void setup()
   if (MDNS.begin(deviceHostname.c_str()))
   {
     Serial.println("mDNS responder started");
-    Serial.print("Access controller at: http://");
-    Serial.print(deviceHostname);
-    Serial.println(".local");
     MDNS.addService("http", "tcp", 80);
   }
   else
   {
-    Serial.println("Error setting up mDNS responder!");
+    Serial.println("mDNS failed - not critical, continuing.");
   }
 
   // Start DNS Server for Captive Portal
-  // This redirects ALL domain requests to the ESP32's IP
-  dnsServer.start(DNS_PORT, "*", myIP);
+  if (apOk)
+  {
+    dnsServer.start(DNS_PORT, "*", myIP);
+  }
 
   // Web Server Routes
   server.on("/", handleRoot);
   server.on("/cmd", handleCommandWeb);
   server.on("/getSettings", handleGetSettings);
   server.on("/setSettings", handleSetSettings);
-
-  // Terminal endpoint
   server.on("/terminal", handleTerminalCmd);
-
-  // API endpoints for network communication
   server.on("/api/status", handleGetStatus);
   server.on("/api/command", handleApiCommand);
-
-  // Catch-all route for captive portal
-  // This ensures any URL redirects to the controller page
   server.onNotFound(handleRoot);
-
   server.begin();
 
-  // PWM Init
+  // === SERVO INIT (AFTER WiFi to spread current draw over time) ===
+  // Attach and write each servo ONE AT A TIME to prevent current spikes/brownout
+  if (displayOk)
+    displayBootMsg("Init servos...");
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
   ESP32PWM::allocateTimer(2);
@@ -661,15 +741,20 @@ void setup()
   for (int i = 0; i < 8; i++)
   {
     servos[i].setPeriodHertz(50);
-    // Map 0-180 to approx 732-2929us
     servos[i].attach(servoPins[i], 732, 2929);
+    servos[i].write(90); // Immediately set to 90° before attaching next
+    delay(150);          // Let servo settle + spread current draw
   }
-  delay(10);
 
-  // Show rest face on startup without moving motors
-  setFace("rest");
+  // Show rest face on startup
+  if (displayOk)
+    setFace("rest");
 
-  Serial.println(F("HTTP server & Captive Portal started."));
+  Serial.println(F("=== Sesame Robot READY ==="));
+  Serial.print(F("AP SSID: "));
+  Serial.println(AP_SSID);
+  Serial.print(F("AP IP: "));
+  Serial.println(myIP);
 }
 
 void loop()
