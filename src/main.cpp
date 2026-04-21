@@ -219,6 +219,8 @@ void handleTerminalCmd()
   }
   String cmd = server.arg("cmd");
   cmd.trim();
+  Serial.print(F("[DEBUG] handleTerminalCmd: Command received -> "));
+  Serial.println(cmd);
   String cmdLower = cmd;
   cmdLower.toLowerCase();
 
@@ -602,6 +604,7 @@ void setup()
     Serial.print(AP_SSID);
     Serial.print("  IP: ");
     Serial.println(myIP);
+    Serial.println(F("[DEBUG] setup: WiFi Access Point initialized and ready"));
     if (displayOk)
     {
       display.print("AP OK: ");
@@ -770,6 +773,8 @@ void loop()
   if (currentCommand != "")
   {
     String cmd = currentCommand;
+    Serial.print(F("[DEBUG] loop: dispatching command -> "));
+    Serial.println(cmd);
     if (cmd == "forward")
       runWalkPose();
     else if (cmd == "backward")
@@ -1046,6 +1051,8 @@ void setFace(const String &faceName)
   if (faceName == currentFaceName && currentFaceFrames != nullptr)
     return;
 
+  Serial.print(F("[DEBUG] setFace: switching face -> "));
+  Serial.println(faceName);
   currentFaceName = faceName;
   currentFaceFrameIndex = 0;
   lastFaceFrameMs = 0;
@@ -1242,6 +1249,12 @@ void setServoAngle(uint8_t channel, int angle)
   if (channel < 8)
   {
     int adjustedAngle = constrain(angle + servoSubtrim[channel], 0, 180);
+    Serial.print(F("[DEBUG] setServoAngle: ch="));
+    Serial.print(channel);
+    Serial.print(F(" ("));
+    Serial.print(ServoNames[channel]);
+    Serial.print(F(") -> angle="));
+    Serial.println(adjustedAngle);
     servos[channel].write(adjustedAngle);
     delayWithFace(motorCurrentDelay);
   }
