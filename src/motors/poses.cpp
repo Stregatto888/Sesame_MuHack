@@ -1,8 +1,9 @@
 #include "motors/poses.h"
 #include "motors/servo_driver.h"
+#include "display/face_engine.h"
 
 // ============================================================================
-// TEMPORARY PHASE-1 DEPENDENCIES (still defined in main.cpp)
+// TEMPORARY PHASE-1/2 DEPENDENCIES (still defined in main.cpp)
 // These externs will be replaced by FreeRTOS queue reads in Phase 4/5.
 // ============================================================================
 
@@ -10,11 +11,7 @@ extern int frameDelay;        ///< Inter-frame pause used by gait routines (ms).
 extern int walkCycles;        ///< Repetitions per locomotion gait invocation.
 extern String currentCommand; ///< Active command string — will become a queue in Phase 4.
 
-extern void setFace(const String &faceName);
-extern void setFaceMode(FaceAnimMode mode);
-extern void setFaceWithMode(const String &faceName, FaceAnimMode mode);
 extern void delayWithFace(unsigned long ms);
-extern void enterIdle();
 extern bool pressingCheck(String cmd, int ms);
 
 // Convenience alias so pose bodies read naturally.
@@ -28,7 +25,7 @@ static inline void setServoAngle(uint8_t ch, int angle) { Motors::setAngle(ch, a
 void runRestPose()
 {
   Serial.println(F("REST"));
-  setFaceWithMode("rest", FACE_ANIM_BOOMERANG);
+  Display::setWithMode("rest", FACE_ANIM_BOOMERANG);
   for (int i = 0; i < SERVO_COUNT; i++)
     Motors::setAngle(i, 90);
 }
@@ -39,7 +36,7 @@ void runStandPose(int face)
   Serial.print(F("[DEBUG] runStandPose: entering stand pose, face="));
   Serial.println(face);
   if (face == 1)
-    setFaceWithMode("stand", FACE_ANIM_ONCE);
+    Display::setWithMode("stand", FACE_ANIM_ONCE);
   setServoAngle(R1, 135);
   setServoAngle(R2, 45);
   setServoAngle(L1, 45);
@@ -49,13 +46,13 @@ void runStandPose(int face)
   setServoAngle(L3, 0);
   setServoAngle(L4, 180);
   if (face == 1)
-    enterIdle();
+    Display::enterIdle();
 }
 
 void runWavePose()
 {
   Serial.println(F("WAVE"));
-  setFaceWithMode("wave", FACE_ANIM_ONCE);
+  Display::setWithMode("wave", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(R4, 80);
@@ -80,7 +77,7 @@ void runWavePose()
 void runDancePose()
 {
   Serial.println(F("DANCE"));
-  setFaceWithMode("dance", FACE_ANIM_LOOP);
+  Display::setWithMode("dance", FACE_ANIM_LOOP);
   setServoAngle(R1, 90);
   setServoAngle(R2, 90);
   setServoAngle(L1, 90);
@@ -111,7 +108,7 @@ void runDancePose()
 void runSwimPose()
 {
   Serial.println(F("SWIM"));
-  setFaceWithMode("swim", FACE_ANIM_ONCE);
+  Display::setWithMode("swim", FACE_ANIM_ONCE);
   for (int i = 0; i < SERVO_COUNT; i++)
     Motors::setAngle(i, 90);
   for (int i = 0; i < 4; i++)
@@ -135,7 +132,7 @@ void runSwimPose()
 void runPointPose()
 {
   Serial.println(F("POINT"));
-  setFaceWithMode("point", FACE_ANIM_BOOMERANG);
+  Display::setWithMode("point", FACE_ANIM_BOOMERANG);
   setServoAngle(L2, 60);
   setServoAngle(R1, 135);
   setServoAngle(R2, 100);
@@ -153,7 +150,7 @@ void runPointPose()
 void runPushupPose()
 {
   Serial.println(F("PUSHUP"));
-  setFaceWithMode("pushup", FACE_ANIM_ONCE);
+  Display::setWithMode("pushup", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(L1, 0);
@@ -178,7 +175,7 @@ void runPushupPose()
 void runBowPose()
 {
   Serial.println(F("BOW"));
-  setFaceWithMode("bow", FACE_ANIM_ONCE);
+  Display::setWithMode("bow", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(L1, 0);
@@ -201,7 +198,7 @@ void runBowPose()
 void runCutePose()
 {
   Serial.println(F("CUTE"));
-  setFaceWithMode("cute", FACE_ANIM_ONCE);
+  Display::setWithMode("cute", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(L2, 160);
@@ -230,7 +227,7 @@ void runCutePose()
 void runFreakyPose()
 {
   Serial.println(F("FREAKY"));
-  setFaceWithMode("freaky", FACE_ANIM_ONCE);
+  Display::setWithMode("freaky", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(L1, 0);
@@ -255,7 +252,7 @@ void runFreakyPose()
 void runWormPose()
 {
   Serial.println(F("WORM"));
-  setFaceWithMode("worm", FACE_ANIM_ONCE);
+  Display::setWithMode("worm", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(R1, 180);
@@ -288,7 +285,7 @@ void runWormPose()
 void runShakePose()
 {
   Serial.println(F("SHAKE"));
-  setFaceWithMode("shake", FACE_ANIM_ONCE);
+  Display::setWithMode("shake", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(R1, 135);
@@ -316,14 +313,14 @@ void runShrugPose()
 {
   Serial.println(F("SHRUG"));
   runStandPose(0);
-  setFaceWithMode("dead", FACE_ANIM_ONCE);
+  Display::setWithMode("dead", FACE_ANIM_ONCE);
   delayWithFace(200);
   setServoAngle(R3, 90);
   setServoAngle(R4, 90);
   setServoAngle(L3, 90);
   setServoAngle(L4, 90);
   delayWithFace(1000);
-  setFaceWithMode("shrug", FACE_ANIM_ONCE);
+  Display::setWithMode("shrug", FACE_ANIM_ONCE);
   setServoAngle(R3, 0);
   setServoAngle(R4, 180);
   setServoAngle(L3, 180);
@@ -338,7 +335,7 @@ void runDeadPose()
 {
   Serial.println(F("DEAD"));
   runStandPose(0);
-  setFaceWithMode("dead", FACE_ANIM_BOOMERANG);
+  Display::setWithMode("dead", FACE_ANIM_BOOMERANG);
   delayWithFace(200);
   setServoAngle(R3, 90);
   setServoAngle(R4, 90);
@@ -351,7 +348,7 @@ void runDeadPose()
 void runCrabPose()
 {
   Serial.println(F("CRAB"));
-  setFaceWithMode("crab", FACE_ANIM_ONCE);
+  Display::setWithMode("crab", FACE_ANIM_ONCE);
   runStandPose(0);
   delayWithFace(200);
   setServoAngle(R1, 90);
@@ -387,7 +384,7 @@ void runCrabPose()
 void runWalkPose()
 {
   Serial.println(F("WALK FWD"));
-  setFaceWithMode("walk", FACE_ANIM_ONCE);
+  Display::setWithMode("walk", FACE_ANIM_ONCE);
   // Initial step
   setServoAngle(R3, 135);
   setServoAngle(L3, 45);
@@ -433,7 +430,7 @@ void runWalkPose()
 void runWalkBackward()
 {
   Serial.println(F("WALK BACK"));
-  setFaceWithMode("walk", FACE_ANIM_ONCE);
+  Display::setWithMode("walk", FACE_ANIM_ONCE);
   if (!pressingCheck("backward", frameDelay))
     return;
 
@@ -474,7 +471,7 @@ void runWalkBackward()
 void runTurnLeft()
 {
   Serial.println(F("TURN LEFT"));
-  setFaceWithMode("walk", FACE_ANIM_ONCE);
+  Display::setWithMode("walk", FACE_ANIM_ONCE);
   for (int i = 0; i < walkCycles; i++)
   {
     // legset 1 (R1 L2)
@@ -518,7 +515,7 @@ void runTurnLeft()
 void runTurnRight()
 {
   Serial.println(F("TURN RIGHT"));
-  setFaceWithMode("walk", FACE_ANIM_ONCE);
+  Display::setWithMode("walk", FACE_ANIM_ONCE);
   for (int i = 0; i < walkCycles; i++)
   {
     // legset 2 (R2 L1)

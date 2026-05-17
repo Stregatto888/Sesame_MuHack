@@ -38,26 +38,6 @@ extern const String ServoNames[SERVO_COUNT];
 int servoNameToIndex(const String &servo);
 
 // ============================================================================
-// FACE ANIMATION MODE (shared contract between motors and display)
-// ============================================================================
-
-/**
- * @enum FaceAnimMode
- * @brief Playback strategy for OLED face animation sequences.
- *
- * Consumed by setFaceMode / setFaceWithMode to drive the per-frame state
- * machine in the display module.
- *
- * @note Will migrate to include/display/face_engine.h in Phase 2.
- */
-enum FaceAnimMode : uint8_t
-{
-  FACE_ANIM_LOOP = 0,     ///< Cycle frames forever (e.g. ambient idle).
-  FACE_ANIM_ONCE = 1,     ///< Play once and freeze on the last frame.
-  FACE_ANIM_BOOMERANG = 2 ///< Play forwards then backwards, repeat.
-};
-
-// ============================================================================
 // MOTORS NAMESPACE — hardware driver
 // ============================================================================
 

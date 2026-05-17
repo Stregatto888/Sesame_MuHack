@@ -129,7 +129,56 @@ been moved to `include/core/config.h`. The empty scaffold folders
 
 ## Phase 2 — Extract Display Module
 
-_(To be filled after Phase 2 implementation)_
+**What changed**:
+- `include/display/bitmaps.h` — bitmap assets moved here from `include/face-bitmaps.h`
+  (old file deleted).
+- `include/display/face_engine.h` — `FaceAnimMode` enum (moved from `servo_driver.h`);
+  `Display` namespace declarations: `init()`, `setMarqueeText()`, `bootMsg()`, `set()`,
+  `setMode()`, `setWithMode()`, `tickFace()`, `tickIdle()`, `tickMarquee()`,
+  `enterIdle()`, `exitIdle()`, `notifyInput()`, `currentFaceName`, `faceFps`.
+- `src/display/face_engine.cpp` — all display state (face frames, idle FSM, marquee
+  scrolling) and all render logic moved out of `main.cpp` into the `Display` namespace.
+- `include/motors/servo_driver.h` — `FaceAnimMode` enum removed (lives in
+  `face_engine.h` now).
+- `src/motors/poses.cpp` — removed face `extern` declarations; added
+  `#include "display/face_engine.h"`; all `setFaceWithMode` / `enterIdle` calls
+  updated to `Display::setWithMode` / `Display::enterIdle`.
+- `src/main.cpp` — removed `Adafruit_SSD1306 display`, all face state globals, all
+  face function bodies (setFace, updateAnimatedFace, idle FSM, marquee, …); updated
+  `loop()`, `delayWithFace()`, `pressingCheck()`, `recordInput()` to call
+  `Display::tick*` / `Display::notifyInput()`; setup() calls `Display::init()` and
+  `Display::setMarqueeText()`.
+
+**Expected outcome**: Identical behaviour to Phase 1.
+
+### Test checklist
+
+1. **Boot display** — Power on. OLED must show the same boot messages as before
+   (`Sesame MuHack Boot`, `Starting AP...`, `Init servos...`).  After boot the
+   `rest` face animation must appear.
+
+2. **Idle marquee** — Do NOT send any command for 30 seconds.  The scrolling WiFi
+   info banner must appear across the top of the OLED face.  Send any command via
+   the web UI — the banner must disappear immediately.
+
+3. **All static poses** — Trigger each of the 15 poses via the web terminal or
+   `/cmd?pose=<name>`.  Each pose must show its matching face animation on the OLED
+   and return the robot to stand/rest on completion.
+
+4. **Locomotion gaits** — Trigger `forward`, `backward`, `left`, `right`.  The
+   `walk` face must appear.  Interrupt each with a different command mid-gait — the
+   robot must abort within one frame and switch face to the new command's face.
+
+5. **Idle blink** — After triggering `stand` (which calls `Display::enterIdle()`),
+   wait 3–7 seconds.  The OLED must randomly switch to the `idle_blink` face then
+   return to `idle`.  Occasionally a double-blink sequence occurs.
+
+6. **FPS tuning via settings** — Navigate to
+   `http://192.168.4.1/setSettings?faceFps=10` → `OK`.  Face animation should
+   noticeably speed up on the OLED.  Reset: `setSettings?faceFps=1`.
+
+7. **Status endpoint** — `GET /api/status` must return valid JSON with the correct
+   `currentFace` value matching whatever face is currently shown.
 
 ---
 

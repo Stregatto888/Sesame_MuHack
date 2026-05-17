@@ -59,13 +59,9 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Wire.h>
-// ESP32Servo.h is included by motors/servo_driver.h transitively via servo_driver.cpp
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-
-#include "face-bitmaps.h"
 #include "captive-portal.h"
 #include "core/config.h"
+#include "display/face_engine.h"
 #include "motors/servo_driver.h"
 #include "motors/poses.h"
 
@@ -75,9 +71,6 @@
 
 /// DNS server intercepting every query so the captive portal auto-pops up.
 DNSServer dnsServer;
-
-/// SSD1306 face display.
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 /// HTTP server backing the captive portal and JSON command API.
 WebServer server(80);
@@ -100,36 +93,10 @@ int walkCycles = DEFAULT_WALK_CYCLES;             ///< Gait repetitions per walk
 int motorCurrentDelay = DEFAULT_MOTOR_CURRENT_DELAY; ///< Pause after each servo write to spread current.
 
 // ============================================================================
-// FACE ANIMATION STATE
+// COMMAND DISPATCHER STATE
 // ============================================================================
 
 String currentCommand = "";                              ///< Active command from any UI.
-String currentFaceName = "default";                      ///< Face symbolic name.
-const unsigned char *const *currentFaceFrames = nullptr; ///< Frame array.
-uint8_t currentFaceFrameCount = 0;                       ///< Frames in array.
-uint8_t currentFaceFrameIndex = 0;                       ///< Index played next.
-unsigned long lastFaceFrameMs = 0;                       ///< millis() of last frame.
-int faceFps = DEFAULT_FACE_FPS;                          ///< Default FPS fallback.
-FaceAnimMode currentFaceMode = FACE_ANIM_LOOP;           ///< Current mode.
-int8_t faceFrameDirection = 1;                           ///< 1=fwd, -1=rev.
-bool faceAnimFinished = false;                           ///< Once-mode flag.
-int currentFaceFps = 0;                                  ///< FPS for active face.
-
-bool idleActive = false;           ///< Idle face active?
-bool idleBlinkActive = false;      ///< Currently blinking?
-unsigned long nextIdleBlinkMs = 0; ///< Next blink schedule.
-uint8_t idleBlinkRepeatsLeft = 0;  ///< Pending double-blinks.
-
-// ============================================================================
-// STATUS BAR / WIFI INFO SCROLLING
-// ============================================================================
-
-unsigned long lastInputTime = 0;    ///< millis() of last received input.
-bool firstInputReceived = false;    ///< Set true after any user input.
-bool showingWifiInfo = false;       ///< Marquee currently active?
-int wifiScrollPos = 0;              ///< Marquee X offset, in pixels.
-unsigned long lastWifiScrollMs = 0; ///< millis() of last marquee tick.
-String wifiInfoText = "";           ///< Pre-rendered marquee text.
 
 // ============================================================================
 // NETWORK / HACK-LOCK STATE
@@ -144,106 +111,10 @@ IPAddress hackOwnerIP;    ///< Client owning the lock.
 String hackOwnerMAC = ""; ///< Reserved for future MAC lock.
 
 // ============================================================================
-// FACE DISPATCH TABLE (built from FACE_LIST)
-// ============================================================================
-
-/**
- * @struct FaceEntry
- * @brief Bind a symbolic face name to its bitmap frame array.
- */
-struct FaceEntry
-{
-  const char *name;                   ///< Lowercase identifier.
-  const unsigned char *const *frames; ///< Pointer to the frame array.
-  uint8_t maxFrames;                  ///< Capacity of @ref frames.
-};
-
-// MAX_FACE_FRAMES is defined in core/config.h
-
-/// Expand an `FACE_LIST` entry into a six-slot frame array.
-#define MAKE_FACE_FRAMES(name)                                         \
-  const unsigned char *const face_##name##_frames[] = {                \
-      epd_bitmap_##name, epd_bitmap_##name##_1, epd_bitmap_##name##_2, \
-      epd_bitmap_##name##_3, epd_bitmap_##name##_4, epd_bitmap_##name##_5};
-
-#define X(name) MAKE_FACE_FRAMES(name)
-FACE_LIST
-#undef X
-#undef MAKE_FACE_FRAMES
-
-/// Runtime registry mapping face names to their frame arrays.
-const FaceEntry faceEntries[] = {
-#define X(name) {#name, face_##name##_frames, MAX_FACE_FRAMES},
-    FACE_LIST
-#undef X
-    {"default", face_defualt_frames, MAX_FACE_FRAMES}};
-
-/**
- * @struct FaceFpsEntry
- * @brief Override default playback rate for a single face.
- */
-struct FaceFpsEntry
-{
-  const char *name; ///< Face identifier (lowercase).
-  uint8_t fps;      ///< Frame-rate to apply to @ref name.
-};
-
-/// Per-face FPS overrides. Faces missing here fall back to ::faceFps.
-const FaceFpsEntry faceFpsEntries[] = {
-    {"walk", 1},
-    {"rest", 1},
-    {"swim", 1},
-    {"dance", 1},
-    {"wave", 1},
-    {"point", 5},
-    {"stand", 1},
-    {"cute", 1},
-    {"pushup", 1},
-    {"freaky", 1},
-    {"bow", 1},
-    {"worm", 1},
-    {"shake", 1},
-    {"shrug", 1},
-    {"dead", 2},
-    {"crab", 1},
-    {"idle", 1},
-    {"idle_blink", 7},
-    {"default", 1},
-    // Conversational faces are driven externally (no auto-animation).
-    {"happy", 1},
-    {"talk_happy", 1},
-    {"sad", 1},
-    {"talk_sad", 1},
-    {"angry", 1},
-    {"talk_angry", 1},
-    {"surprised", 1},
-    {"talk_surprised", 1},
-    {"sleepy", 1},
-    {"talk_sleepy", 1},
-    {"love", 1},
-    {"talk_love", 1},
-    {"excited", 1},
-    {"talk_excited", 1},
-    {"confused", 1},
-    {"talk_confused", 1},
-    {"thinking", 1},
-    {"talk_thinking", 1},
-};
-
-// ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
 
-void updateFaceBitmap(const unsigned char *bitmap);
-void setFace(const String &faceName);
-void setFaceMode(FaceAnimMode mode);
-void setFaceWithMode(const String &faceName, FaceAnimMode mode);
-void updateAnimatedFace();
 void delayWithFace(unsigned long ms);
-void enterIdle();
-void exitIdle();
-void updateIdleBlink();
-int getFaceFpsForName(const String &faceName);
 bool pressingCheck(String cmd, int ms);
 void handleGetSettings();
 void handleSetSettings();
@@ -360,7 +231,7 @@ void handleTerminalCmd()
     resp += "\\nSSID: " + String(AP_SSID);
     resp += "\\nClients: " + String(WiFi.softAPgetStationNum());
     resp += "\\nCommand: " + (currentCommand.length() > 0 ? currentCommand : String("idle"));
-    resp += "\\nFace: " + currentFaceName;
+    resp += "\\nFace: " + Display::currentFaceName;
     resp += "\\nHack Lock: " + String(hackLocked ? "ACTIVE" : "off");
     if (hackLocked)
       resp += "\\nOwner: " + hackOwnerIP.toString();
@@ -396,7 +267,7 @@ void handleTerminalCmd()
   {
     currentCommand = cmdLower;
     recordInput();
-    exitIdle();
+    Display::exitIdle();
     server.send(200, "application/json", "{\"response\":\"Executing: " + cmdLower + "\"}");
     return;
   }
@@ -417,7 +288,7 @@ void handleTerminalCmd()
     {
       currentCommand = cmdLower;
       recordInput();
-      exitIdle();
+      Display::exitIdle();
       server.send(200, "application/json", "{\"response\":\"Pose: " + cmdLower + "\"}");
       return;
     }
@@ -449,14 +320,14 @@ void handleCommandWeb()
   {
     currentCommand = server.arg("pose");
     recordInput();
-    exitIdle();
+    Display::exitIdle();
     server.send(200, "text/plain", "OK");
   }
   else if (server.hasArg("go"))
   {
     currentCommand = server.arg("go");
     recordInput();
-    exitIdle();
+    Display::exitIdle();
     server.send(200, "text/plain", "OK");
   }
   else if (server.hasArg("stop"))
@@ -502,7 +373,7 @@ void handleGetSettings()
   json += "\"frameDelay\":" + String(frameDelay) + ",";
   json += "\"walkCycles\":" + String(walkCycles) + ",";
   json += "\"motorCurrentDelay\":" + String(motorCurrentDelay) + ",";
-  json += "\"faceFps\":" + String(faceFps);
+  json += "\"faceFps\":" + String(Display::faceFps);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -522,7 +393,7 @@ void handleSetSettings()
   if (server.hasArg("motorCurrentDelay"))
     motorCurrentDelay = server.arg("motorCurrentDelay").toInt();
   if (server.hasArg("faceFps"))
-    faceFps = (int)max(1L, server.arg("faceFps").toInt());
+    Display::faceFps = (int)max(1L, server.arg("faceFps").toInt());
   server.send(200, "text/plain", "OK");
 }
 
@@ -533,7 +404,7 @@ void handleGetStatus()
 {
   String json = "{";
   json += "\"currentCommand\":\"" + currentCommand + "\",";
-  json += "\"currentFace\":\"" + currentFaceName + "\",";
+  json += "\"currentFace\":\"" + Display::currentFaceName + "\",";
   json += "\"networkConnected\":" + String(networkConnected ? "true" : "false") + ",";
   json += "\"apIP\":\"" + WiFi.softAPIP().toString() + "\"";
   if (networkConnected)
@@ -627,7 +498,7 @@ void handleApiCommand()
   // Set face if provided
   if (face.length() > 0)
   {
-    setFace(face);
+    Display::set(face);
   }
 
   // If face-only, just acknowledge
@@ -649,34 +520,14 @@ void handleApiCommand()
   {
     currentCommand = command;
     recordInput();
-    exitIdle();
+    Display::exitIdle();
     server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Command executed\"}");
   }
 }
 
 // ============================================================================
 // BOOT / DISPLAY UTILITIES
-// ============================================================================
-
-/**
- * @brief Print a boot-time message both on the serial console and the OLED.
- *
- * @param msg    Null-terminated string to display.
- * @param clear  When `true` clear the OLED frame buffer before drawing.
- */
-void displayBootMsg(const char *msg, bool clear = false)
-{
-  if (clear)
-  {
-    display.clearDisplay();
-    display.setCursor(0, 0);
-  }
-  display.println(msg);
-  display.display();
-  Serial.println(msg);
-}
-
-// ============================================================================
+// ============================================================================\n\n// ============================================================================
 // ARDUINO ENTRY POINTS
 // ============================================================================
 
@@ -694,21 +545,10 @@ void setup()
   // I2C Init for ESP32
   Wire.begin(I2C_SDA, I2C_SCL);
 
-  // OLED Init (non-blocking: robot works even without display)
-  bool displayOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
-  if (!displayOk)
-  {
-    Serial.println(F("SSD1306 allocation failed - continuing without display."));
-  }
-
-  if (displayOk)
-  {
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    displayBootMsg("Sesame MuHack Boot", false);
-  }
+  // OLED Init (non-blocking: robot works even without display).
+  // Wire.begin() was called above; Display::init() starts the SSD1306.
+  bool displayOk = Display::init();
+  if (displayOk) Display::bootMsg("Sesame MuHack Boot");
 
   // === ACCESS POINT ===
   // ESP32-S2 + Arduino-ESP32 v3 reliable AP sequence:
@@ -726,7 +566,7 @@ void setup()
   //   4. softAPConfig()    — configure IP only after netif is ready
   //   (never call softAPIP() — can hang on S2; use AP_IP constant instead)
   if (displayOk)
-    displayBootMsg("Starting AP...");
+    Display::bootMsg("Starting AP...");
 
   IPAddress myIP = AP_IP; // Known static IP, never queried from driver
 
@@ -749,16 +589,13 @@ void setup()
     Serial.println(myIP);
     Serial.println(F("[DEBUG] setup: WiFi Access Point initialized and ready"));
     if (displayOk)
-    {
-      display.print("AP OK: ");
-      displayBootMsg(AP_SSID);
-    }
+      Display::bootMsg(("AP OK: " + String(AP_SSID)).c_str());
   }
   else
   {
     Serial.println("WARNING: AP failed, retrying...");
     if (displayOk)
-      displayBootMsg("AP FAILED! Retrying...");
+      Display::bootMsg("AP FAILED! Retrying...");
     delay(1000);
     apOk = WiFi.softAP(AP_SSID, AP_PASS);
     Serial.print("softAP retry returned: ");
@@ -769,13 +606,13 @@ void setup()
       WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
       Serial.println("AP Created on retry.");
       if (displayOk)
-        displayBootMsg("AP OK (retry)");
+        Display::bootMsg("AP OK (retry)");
     }
     else
     {
       Serial.println("AP creation failed permanently. Robot will work offline.");
       if (displayOk)
-        displayBootMsg("AP FAILED - offline mode");
+        Display::bootMsg("AP FAILED - offline mode");
     }
   }
 
@@ -783,7 +620,7 @@ void setup()
   if (ENABLE_NETWORK_MODE && String(NETWORK_SSID).length() > 0)
   {
     if (displayOk)
-      displayBootMsg("Connecting WiFi...");
+      Display::bootMsg("Connecting WiFi...");
     Serial.println("Attempting to connect to network: " + String(NETWORK_SSID));
 
     // Switch to AP+STA mode — softAP() must be re-issued after mode change
@@ -812,17 +649,14 @@ void setup()
       Serial.print("Connected to network! IP: ");
       Serial.println(networkIP);
       if (displayOk)
-      {
-        display.print("Net: ");
-        displayBootMsg(networkIP.toString().c_str());
-      }
+        Display::bootMsg(("Net: " + networkIP.toString()).c_str());
     }
     else
     {
       Serial.println();
       Serial.println("Network connection failed - AP still active, continuing.");
       if (displayOk)
-        displayBootMsg("Net: skip (AP only)");
+        Display::bootMsg("Net: skip (AP only)");
       WiFi.disconnect(false); // Stop STA scanning, keep AP
     }
   }
@@ -831,8 +665,9 @@ void setup()
     Serial.println("Network mode disabled. Running in AP-only mode.");
   }
 
-  // Build WiFi info text for scrolling
-  // myIP is already set to the static AP_IP — no need to call softAPIP()
+  // Build WiFi info text and hand it to the display module.
+  // myIP is already set to the static AP_IP — no need to call softAPIP().
+  String wifiInfoText;
   if (networkConnected)
   {
     wifiInfoText = "AP: " + String(AP_SSID) + " (" + myIP.toString() + ")  |  Network: " + String(NETWORK_SSID) + " (" + networkIP.toString() + ") or " + deviceHostname + ".local  |  ";
@@ -841,11 +676,7 @@ void setup()
   {
     wifiInfoText = "Connect to WiFi: " + String(AP_SSID) + "  |  Pass: " + String(AP_PASS) + "  |  IP: " + myIP.toString() + "  |  Captive Portal will auto-open!  |  ";
   }
-
-  // Initialize input tracking
-  lastInputTime = millis();
-  firstInputReceived = false;
-  showingWifiInfo = false;
+  Display::setMarqueeText(wifiInfoText);
 
   // Start mDNS responder for local network discovery
   if (MDNS.begin(deviceHostname.c_str()))
@@ -878,12 +709,12 @@ void setup()
   // === SERVO INIT (AFTER WiFi to spread current draw over time) ===
   // PWM timer allocation and per-servo stagger are handled inside Motors::init().
   if (displayOk)
-    displayBootMsg("Init servos...");
+    Display::bootMsg("Init servos...");
   Motors::init();
 
   // Show rest face on startup
   if (displayOk)
-    setFace("rest");
+    Display::set("rest");
 
   Serial.println(F("=== Sesame Robot READY ==="));
   Serial.print(F("AP SSID: "));
@@ -909,9 +740,9 @@ void loop()
   dnsServer.processNextRequest();
 
   server.handleClient();
-  updateAnimatedFace();
-  updateIdleBlink();
-  updateWifiInfoScroll();
+  Display::tickFace();
+  Display::tickIdle();
+  Display::tickMarquee();
 
   if (currentCommand != "")
   {
@@ -1168,300 +999,28 @@ void loop()
 }
 
 // ============================================================================
-// FACE RENDERING
+// COOPERATIVE HELPERS
 // ============================================================================
 
 /**
- * @brief Push a single 128x64 monochrome bitmap to the OLED.
- */
-void updateFaceBitmap(const unsigned char *bitmap)
-{
-  display.clearDisplay();
-  display.drawBitmap(0, 0, bitmap, 128, 64, SSD1306_WHITE);
-  display.display();
-}
-
-/**
- * @brief Count consecutive non-null frame pointers starting at @p frames.
+ * @brief Cooperative delay: keeps DNS, HTTP and face animation alive.
  *
- * Stops at the first `nullptr` slot, which is how the runtime infers the
- * length of a face animation declared via the `MAKE_FACE_FRAMES` macro.
- *
- * @param frames    Frame pointer array (may be `nullptr`).
- * @param maxFrames Capacity of @p frames.
- * @return Number of valid frames available for playback.
- */
-uint8_t countFrames(const unsigned char *const *frames, uint8_t maxFrames)
-{
-  if (frames == nullptr || frames[0] == nullptr)
-    return 0;
-  uint8_t count = 0;
-  for (uint8_t i = 0; i < maxFrames; i++)
-  {
-    if (frames[i] == nullptr)
-      break;
-    count++;
-  }
-  return count;
-}
-
-/**
- * @brief Switch the OLED to the requested face by symbolic name.
- *
- * Resets the per-face animation state and immediately renders the first
- * frame. If @p faceName is unknown the runtime falls back to the
- * `default` face entry.
- *
- * @param faceName Symbolic name (case-insensitive). See @ref FACE_LIST.
- */
-void setFace(const String &faceName)
-{
-  if (faceName == currentFaceName && currentFaceFrames != nullptr)
-    return;
-
-  Serial.print(F("[DEBUG] setFace: switching face -> "));
-  Serial.println(faceName);
-  currentFaceName = faceName;
-  currentFaceFrameIndex = 0;
-  lastFaceFrameMs = 0;
-  faceFrameDirection = 1;
-  faceAnimFinished = false;
-  currentFaceFps = getFaceFpsForName(faceName);
-
-  currentFaceFrames = face_defualt_frames;
-  currentFaceFrameCount = countFrames(face_defualt_frames, MAX_FACE_FRAMES);
-
-  for (size_t i = 0; i < (sizeof(faceEntries) / sizeof(faceEntries[0])); i++)
-  {
-    if (faceName.equalsIgnoreCase(faceEntries[i].name))
-    {
-      currentFaceFrames = faceEntries[i].frames;
-      currentFaceFrameCount = countFrames(faceEntries[i].frames, faceEntries[i].maxFrames);
-      break;
-    }
-  }
-
-  if (currentFaceFrameCount == 0)
-  {
-    currentFaceFrames = face_defualt_frames;
-    currentFaceFrameCount = countFrames(face_defualt_frames, MAX_FACE_FRAMES);
-    currentFaceName = "default";
-    currentFaceFps = getFaceFpsForName(currentFaceName);
-  }
-
-  if (currentFaceFrameCount > 0 && currentFaceFrames[0] != nullptr)
-  {
-    updateFaceBitmap(currentFaceFrames[0]);
-  }
-}
-
-/**
- * @brief Override the playback strategy of the currently displayed face.
- */
-void setFaceMode(FaceAnimMode mode)
-{
-  currentFaceMode = mode;
-  faceFrameDirection = 1;
-  faceAnimFinished = false;
-}
-
-/**
- * @brief Convenience wrapper combining @ref setFaceMode and @ref setFace.
- */
-void setFaceWithMode(const String &faceName, FaceAnimMode mode)
-{
-  setFaceMode(mode);
-  setFace(faceName);
-}
-
-/**
- * @brief Look up the per-face FPS override.
- *
- * @param faceName Face identifier (case-insensitive).
- * @return The per-face override, or the global ::faceFps fallback.
- */
-int getFaceFpsForName(const String &faceName)
-{
-  for (size_t i = 0; i < (sizeof(faceFpsEntries) / sizeof(faceFpsEntries[0])); i++)
-  {
-    if (faceName.equalsIgnoreCase(faceFpsEntries[i].name))
-    {
-      return faceFpsEntries[i].fps;
-    }
-  }
-  return faceFps;
-}
-
-/**
- * @brief Advance the face animation according to the active mode.
- *
- * Implements three strategies:
- *  - ::FACE_ANIM_LOOP       : modular increment, never stops.
- *  - ::FACE_ANIM_ONCE       : stops on the last frame and sets
- *                             @ref faceAnimFinished.
- *  - ::FACE_ANIM_BOOMERANG  : ping-pongs between the first and last frame.
- */
-void updateAnimatedFace()
-{
-  if (currentFaceFrames == nullptr || currentFaceFrameCount <= 1)
-    return;
-  if (currentFaceMode == FACE_ANIM_ONCE && faceAnimFinished)
-    return;
-
-  unsigned long now = millis();
-  int fps = max(1, (currentFaceFps > 0 ? currentFaceFps : faceFps));
-  unsigned long interval = 1000UL / fps;
-  if (now - lastFaceFrameMs >= interval)
-  {
-    lastFaceFrameMs = now;
-    if (currentFaceMode == FACE_ANIM_LOOP)
-    {
-      currentFaceFrameIndex = (currentFaceFrameIndex + 1) % currentFaceFrameCount;
-    }
-    else if (currentFaceMode == FACE_ANIM_ONCE)
-    {
-      if (currentFaceFrameIndex + 1 >= currentFaceFrameCount)
-      {
-        currentFaceFrameIndex = currentFaceFrameCount - 1;
-        faceAnimFinished = true;
-      }
-      else
-      {
-        currentFaceFrameIndex++;
-      }
-    }
-    else
-    {
-      if (faceFrameDirection > 0)
-      {
-        if (currentFaceFrameIndex + 1 >= currentFaceFrameCount)
-        {
-          faceFrameDirection = -1;
-          if (currentFaceFrameIndex > 0)
-            currentFaceFrameIndex--;
-        }
-        else
-        {
-          currentFaceFrameIndex++;
-        }
-      }
-      else
-      {
-        if (currentFaceFrameIndex == 0)
-        {
-          faceFrameDirection = 1;
-          if (currentFaceFrameCount > 1)
-            currentFaceFrameIndex++;
-        }
-        else
-        {
-          currentFaceFrameIndex--;
-        }
-      }
-    }
-    updateFaceBitmap(currentFaceFrames[currentFaceFrameIndex]);
-  }
-}
-
-/**
- * @brief Cooperative @c delay() that keeps DNS, HTTP and face animation alive.
- *
- * Pose / gait routines call this helper instead of `delay()` so that the
- * robot remains responsive (Wi-Fi clients, OLED updates, etc.) while a
- * limb is in motion.
+ * Pose / gait routines call this instead of delay() so the robot remains
+ * responsive while a limb is in motion.
+ * Temporary: moves into a Motors/scheduler context in Phase 5.
  */
 void delayWithFace(unsigned long ms)
 {
   unsigned long start = millis();
   while (millis() - start < ms)
   {
-    updateAnimatedFace();
+    Display::tickFace();
     server.handleClient();
     dnsServer.processNextRequest();
     delay(5);
   }
 }
 
-// ============================================================================
-// IDLE BEHAVIOR
-// ============================================================================
-
-/**
- * @brief Schedule the next idle blink within the [@p minMs, @p maxMs] window.
- */
-void scheduleNextIdleBlink(unsigned long minMs, unsigned long maxMs)
-{
-  unsigned long now = millis();
-  unsigned long interval = (unsigned long)random(minMs, maxMs);
-  nextIdleBlinkMs = now + interval;
-}
-
-/**
- * @brief Activate the idle face and arm the random blink scheduler.
- */
-void enterIdle()
-{
-  idleActive = true;
-  idleBlinkActive = false;
-  idleBlinkRepeatsLeft = 0;
-  setFaceWithMode("idle", FACE_ANIM_BOOMERANG);
-  scheduleNextIdleBlink(3000, 7000);
-}
-
-/**
- * @brief Leave the idle state without altering the currently shown face.
- */
-void exitIdle()
-{
-  idleActive = false;
-  idleBlinkActive = false;
-}
-
-/**
- * @brief Drive the idle blink state machine.
- *
- * When the idle face is active this routine periodically swaps to the
- * `idle_blink` animation (sometimes a double-blink) before returning to
- * the ambient idle face.
- */
-void updateIdleBlink()
-{
-  if (!idleActive)
-    return;
-
-  if (!idleBlinkActive)
-  {
-    if (millis() >= nextIdleBlinkMs)
-    {
-      idleBlinkActive = true;
-      if (idleBlinkRepeatsLeft == 0 && random(0, 100) < 30)
-      {
-        idleBlinkRepeatsLeft = 1; // double blink
-      }
-      setFaceWithMode("idle_blink", FACE_ANIM_ONCE);
-    }
-    return;
-  }
-
-  if (currentFaceMode == FACE_ANIM_ONCE && faceAnimFinished)
-  {
-    idleBlinkActive = false;
-    setFaceWithMode("idle", FACE_ANIM_BOOMERANG);
-    if (idleBlinkRepeatsLeft > 0)
-    {
-      idleBlinkRepeatsLeft--;
-      scheduleNextIdleBlink(120, 220);
-    }
-    else
-    {
-      scheduleNextIdleBlink(3000, 7000);
-    }
-  }
-}
-
-// ============================================================================
-// BOOT / DISPLAY UTILITIES
-// ============================================================================
 bool pressingCheck(String cmd, int ms)
 {
   unsigned long start = millis();
@@ -1469,7 +1028,7 @@ bool pressingCheck(String cmd, int ms)
   {
     server.handleClient();
     dnsServer.processNextRequest();
-    updateAnimatedFace();
+    Display::tickFace();
     if (currentCommand != cmd)
     {
       runStandPose(1);
@@ -1485,83 +1044,5 @@ bool pressingCheck(String cmd, int ms)
  */
 void recordInput()
 {
-  lastInputTime = millis();
-  if (!firstInputReceived)
-  {
-    firstInputReceived = true;
-    showingWifiInfo = false;
-  }
-}
-
-/**
- * @brief Render the Wi-Fi connection-info marquee on the OLED.
- *
- * The marquee scrolls across the top row over the currently shown face
- * until the first user input arrives or the user explicitly dismisses it
- * via @ref recordInput.
- */
-void updateWifiInfoScroll()
-{
-  // Don't show WiFi info if first input has been received
-  if (firstInputReceived)
-  {
-    if (showingWifiInfo)
-    {
-      showingWifiInfo = false;
-      // Restore the current face
-      if (currentFaceFrames != nullptr && currentFaceFrameCount > 0)
-      {
-        updateFaceBitmap(currentFaceFrames[currentFaceFrameIndex]);
-      }
-    }
-    return;
-  }
-
-  unsigned long now = millis();
-
-  // Check if 30 seconds have passed without input
-  if (!showingWifiInfo && (now - lastInputTime >= WIFI_MARQUEE_IDLE_MS))
-  {
-    showingWifiInfo = true;
-    wifiScrollPos = 0;
-    lastWifiScrollMs = now;
-  }
-
-  if (!showingWifiInfo)
-    return;
-
-  // Update scroll every 150ms
-  if (now - lastWifiScrollMs >= WIFI_MARQUEE_TICK_MS)
-  {
-    lastWifiScrollMs = now;
-
-    // Clear and redraw with current face in background
-    display.clearDisplay();
-
-    // Draw the face bitmap in the background
-    if (currentFaceFrames != nullptr && currentFaceFrameCount > 0)
-    {
-      display.drawBitmap(0, 0, currentFaceFrames[currentFaceFrameIndex], 128, 64, SSD1306_WHITE);
-    }
-
-    // Draw black bar for text background on top row
-    display.fillRect(0, 0, 128, 10, SSD1306_BLACK);
-
-    // Draw scrolling text
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextWrap(false);
-    display.setCursor(-wifiScrollPos, 1);
-    display.print(wifiInfoText);
-    display.setTextWrap(true);
-
-    display.display();
-
-    // Advance scroll position
-    wifiScrollPos += WIFI_MARQUEE_SCROLL_PX;
-    if (wifiScrollPos >= (int)(wifiInfoText.length() * 6))
-    {
-      wifiScrollPos = 0;
-    }
-  }
+  Display::notifyInput();
 }
