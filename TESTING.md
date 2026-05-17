@@ -197,6 +197,7 @@ been moved to `include/core/config.h`. The empty scaffold folders
 | `src/main.cpp` | Removed HTTP handlers, `dnsServer`/`server` instances, network/hack-lock globals; setup() calls `Web::init()`; loop()/helpers call `Web::pump()` |
 
 **Design decisions:**
+
 - `Web::networkConnected`, `Web::networkIP`, `Web::deviceHostname` are defined in `web_server.cpp` and set in `setup()` after STA negotiation.
 - `currentCommand`, `frameDelay`, `walkCycles`, `motorCurrentDelay` remain in `main.cpp`; `web_server.cpp` picks them up via `extern`.
 - HTTP handlers call `Display::notifyInput()` directly — `recordInput()` wrapper no longer needed by the web layer (kept in `main.cpp` for the serial CLI only).
@@ -204,6 +205,7 @@ been moved to `include/core/config.h`. The empty scaffold folders
 - mDNS responder start moved into `Web::init()` to keep all network service bringup in one place.
 
 **Verification:**
+
 ```
 pio run   →  SUCCESS  RAM 17.0%  Flash 71.4%
 ```
