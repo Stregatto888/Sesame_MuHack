@@ -82,6 +82,7 @@ been moved to `include/core/config.h`. The empty scaffold folders
 ## Phase 1 — Extract Motors Module
 
 **What changed**:
+
 - `include/motors/servo_driver.h` — `ServoName` and `FaceAnimMode` enums,
   `Motors::init()` and `Motors::setAngle()` declarations, `Motors::subtrim[]`.
 - `src/motors/servo_driver.cpp` — all servo hardware logic: PWM timer
@@ -130,6 +131,7 @@ been moved to `include/core/config.h`. The empty scaffold folders
 ## Phase 2 — Extract Display Module
 
 **What changed**:
+
 - `include/display/bitmaps.h` — bitmap assets moved here from `include/face-bitmaps.h`
   (old file deleted).
 - `include/display/face_engine.h` — `FaceAnimMode` enum (moved from `servo_driver.h`);
@@ -154,28 +156,28 @@ been moved to `include/core/config.h`. The empty scaffold folders
 ### Test checklist
 
 1. **Boot display** — Power on. OLED must show the same boot messages as before
-   (`Sesame MuHack Boot`, `Starting AP...`, `Init servos...`).  After boot the
+   (`Sesame MuHack Boot`, `Starting AP...`, `Init servos...`). After boot the
    `rest` face animation must appear.
 
-2. **Idle marquee** — Do NOT send any command for 30 seconds.  The scrolling WiFi
-   info banner must appear across the top of the OLED face.  Send any command via
+2. **Idle marquee** — Do NOT send any command for 30 seconds. The scrolling WiFi
+   info banner must appear across the top of the OLED face. Send any command via
    the web UI — the banner must disappear immediately.
 
 3. **All static poses** — Trigger each of the 15 poses via the web terminal or
-   `/cmd?pose=<name>`.  Each pose must show its matching face animation on the OLED
+   `/cmd?pose=<name>`. Each pose must show its matching face animation on the OLED
    and return the robot to stand/rest on completion.
 
-4. **Locomotion gaits** — Trigger `forward`, `backward`, `left`, `right`.  The
-   `walk` face must appear.  Interrupt each with a different command mid-gait — the
+4. **Locomotion gaits** — Trigger `forward`, `backward`, `left`, `right`. The
+   `walk` face must appear. Interrupt each with a different command mid-gait — the
    robot must abort within one frame and switch face to the new command's face.
 
 5. **Idle blink** — After triggering `stand` (which calls `Display::enterIdle()`),
-   wait 3–7 seconds.  The OLED must randomly switch to the `idle_blink` face then
-   return to `idle`.  Occasionally a double-blink sequence occurs.
+   wait 3–7 seconds. The OLED must randomly switch to the `idle_blink` face then
+   return to `idle`. Occasionally a double-blink sequence occurs.
 
 6. **FPS tuning via settings** — Navigate to
-   `http://192.168.4.1/setSettings?faceFps=10` → `OK`.  Face animation should
-   noticeably speed up on the OLED.  Reset: `setSettings?faceFps=1`.
+   `http://192.168.4.1/setSettings?faceFps=10` → `OK`. Face animation should
+   noticeably speed up on the OLED. Reset: `setSettings?faceFps=1`.
 
 7. **Status endpoint** — `GET /api/status` must return valid JSON with the correct
    `currentFace` value matching whatever face is currently shown.
@@ -184,7 +186,29 @@ been moved to `include/core/config.h`. The empty scaffold folders
 
 ## Phase 3 — Extract Web Module
 
-_(To be filled after Phase 3 implementation)_
+**Goal:** Move all HTTP/DNS server logic out of `main.cpp` into a `Web::` namespace.
+
+**Files added / changed:**
+| File | Change |
+|---|---|
+| `include/web/web_assets.h` | Moved from `include/captive-portal.h` — PROGMEM HTML/CSS/JS assets |
+| `include/web/web_server.h` | New — `Web::` namespace declarations: `init()`, `pump()`, network state externs |
+| `src/web/web_server.cpp` | New — all HTTP handler bodies, `WebServer`/`DNSServer` instances, hack-lock state, mDNS init |
+| `src/main.cpp` | Removed HTTP handlers, `dnsServer`/`server` instances, network/hack-lock globals; setup() calls `Web::init()`; loop()/helpers call `Web::pump()` |
+
+**Design decisions:**
+- `Web::networkConnected`, `Web::networkIP`, `Web::deviceHostname` are defined in `web_server.cpp` and set in `setup()` after STA negotiation.
+- `currentCommand`, `frameDelay`, `walkCycles`, `motorCurrentDelay` remain in `main.cpp`; `web_server.cpp` picks them up via `extern`.
+- HTTP handlers call `Display::notifyInput()` directly — `recordInput()` wrapper no longer needed by the web layer (kept in `main.cpp` for the serial CLI only).
+- `hackLocked`, `hackOwnerIP`, `hackOwnerMAC` are now `static` inside `web_server.cpp` — fully private to the web module.
+- mDNS responder start moved into `Web::init()` to keep all network service bringup in one place.
+
+**Verification:**
+```
+pio run   →  SUCCESS  RAM 17.0%  Flash 71.4%
+```
+
+**Commit:** _to be filled_
 
 ---
 

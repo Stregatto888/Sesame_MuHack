@@ -55,34 +55,20 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
-#include <DNSServer.h>
-#include <ESPmDNS.h>
 #include <Wire.h>
-#include "captive-portal.h"
 #include "core/config.h"
 #include "display/face_engine.h"
 #include "motors/servo_driver.h"
 #include "motors/poses.h"
+#include "web/web_server.h"
 
 // ============================================================================
 // PERIPHERAL INSTANCES
 // ============================================================================
 
-/// DNS server intercepting every query so the captive portal auto-pops up.
-DNSServer dnsServer;
-
-/// HTTP server backing the captive portal and JSON command API.
-WebServer server(80);
-
-// ============================================================================
-// SERVO ROUTING
-// ============================================================================
-//
-// Servo objects, pin mapping and subtrim values are now owned by the
+// Servo objects, pin mapping and subtrim values are owned by the
 // Motors namespace in src/motors/servo_driver.cpp.
 // Access subtrim via Motors::subtrim[]  and servo writes via Motors::setAngle().
-//
 
 // ============================================================================
 // ANIMATION TIMING
@@ -98,17 +84,7 @@ int motorCurrentDelay = DEFAULT_MOTOR_CURRENT_DELAY; ///< Pause after each servo
 
 String currentCommand = "";                              ///< Active command from any UI.
 
-// ============================================================================
-// NETWORK / HACK-LOCK STATE
-// ============================================================================
-
-bool networkConnected = false;          ///< STA association status.
-IPAddress networkIP;                    ///< IP obtained on the upstream LAN.
-String deviceHostname = DEVICE_HOSTNAME; ///< mDNS hostname.
-
-bool hackLocked = false;  ///< Exclusive-control flag.
-IPAddress hackOwnerIP;    ///< Client owning the lock.
-String hackOwnerMAC = ""; ///< Reserved for future MAC lock.
+// Network and hack-lock state is owned by Web namespace (src/web/web_server.cpp).
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -116,414 +92,9 @@ String hackOwnerMAC = ""; ///< Reserved for future MAC lock.
 
 void delayWithFace(unsigned long ms);
 bool pressingCheck(String cmd, int ms);
-void handleGetSettings();
-void handleSetSettings();
-void handleGetStatus();
-void handleApiCommand();
-void updateWifiInfoScroll();
 void recordInput();
-void handleTerminalCmd();
-bool isHackBlocked();
 
-// ============================================================================
-// HTTP HANDLERS - CAPTIVE PORTAL
-// ============================================================================
-
-/**
- * @brief Serve the embedded captive-portal landing page.
- * @see captive-portal.h
- */
-void handleRoot()
-{
-  server.send(200, "text/html", index_html);
-}
-
-// ============================================================================
-// HACK-LOCK HELPERS
-// ============================================================================
-
-/**
- * @brief Check whether the current HTTP request is denied by the hack lock.
- *
- * When @ref hackLocked is set, only the IP address recorded in
- * @ref hackOwnerIP is allowed to drive the robot.
- *
- * @return `true` if the request comes from a non-owner client while the
- *         lock is engaged.
- */
-bool isHackBlocked()
-{
-  if (!hackLocked)
-    return false;
-  IPAddress clientIP = server.client().remoteIP();
-  return (clientIP != hackOwnerIP);
-}
-
-// ============================================================================
-// HTTP HANDLERS - TERMINAL & COMMAND API
-// ============================================================================
-
-/**
- * @brief Handle text commands issued through the embedded terminal page.
- *
- * Recognises the following keywords:
- *  - `hack`    : take exclusive control of the robot.
- *  - `muhack`  : release exclusive control (only by the lock owner).
- *  - `status`  : dump the current runtime state.
- *  - `help`    : list available commands.
- *  - movement  : `forward`, `backward`, `left`, `right`, `stop`.
- *  - poses     : `rest`, `stand`, `wave`, ... (see ::validPoses below).
- *
- * Replies are JSON-encoded and consumed by the JavaScript front-end.
- */
-void handleTerminalCmd()
-{
-  if (!server.hasArg("cmd"))
-  {
-    server.send(400, "application/json", "{\"error\":\"Missing cmd\"}");
-    return;
-  }
-  String cmd = server.arg("cmd");
-  cmd.trim();
-  Serial.print(F("[DEBUG] handleTerminalCmd: Command received -> "));
-  Serial.println(cmd);
-  String cmdLower = cmd;
-  cmdLower.toLowerCase();
-
-  IPAddress clientIP = server.client().remoteIP();
-
-  // --- HACK command: take exclusive control ---
-  if (cmdLower == "hack")
-  {
-    hackLocked = true;
-    hackOwnerIP = clientIP;
-    Serial.print("[HACK] Control locked by: ");
-    Serial.println(clientIP);
-    server.send(200, "application/json", "{\"response\":\"ACCESS GRANTED. You now have exclusive control.\\nAll other users are locked out.\\nType 'muhack' to release control.\",\"locked\":true}");
-    return;
-  }
-
-  // --- MUHACK command: release exclusive control ---
-  if (cmdLower == "muhack")
-  {
-    if (hackLocked && clientIP == hackOwnerIP)
-    {
-      hackLocked = false;
-      hackOwnerIP = IPAddress(0, 0, 0, 0);
-      Serial.println("[MUHACK] Control released.");
-      server.send(200, "application/json", "{\"response\":\"LOCK RELEASED. All users can now control the robot.\\nMuHack - Brescia Hackerspace\",\"locked\":false}");
-    }
-    else if (hackLocked)
-    {
-      server.send(200, "application/json", "{\"response\":\"ERROR: Only the hacker who locked can release.\\nAsk them to type 'muhack'.\",\"locked\":true}");
-    }
-    else
-    {
-      server.send(200, "application/json", "{\"response\":\"Robot is already free. No lock active.\\nMuHack - Brescia Hackerspace\",\"locked\":false}");
-    }
-    return;
-  }
-
-  // --- STATUS command ---
-  if (cmdLower == "status")
-  {
-    String resp = "IP: " + WiFi.softAPIP().toString();
-    resp += "\\nSSID: " + String(AP_SSID);
-    resp += "\\nClients: " + String(WiFi.softAPgetStationNum());
-    resp += "\\nCommand: " + (currentCommand.length() > 0 ? currentCommand : String("idle"));
-    resp += "\\nFace: " + Display::currentFaceName;
-    resp += "\\nHack Lock: " + String(hackLocked ? "ACTIVE" : "off");
-    if (hackLocked)
-      resp += "\\nOwner: " + hackOwnerIP.toString();
-    server.send(200, "application/json", "{\"response\":\"" + resp + "\"}");
-    return;
-  }
-
-  // --- HELP command ---
-  if (cmdLower == "help")
-  {
-    String resp = "=== SESAME TERMINAL ===";
-    resp += "\\nMovement: forward, backward, left, right, stop";
-    resp += "\\nPoses: rest, stand, wave, dance, swim, point";
-    resp += "\\n       pushup, bow, cute, freaky, worm, shake";
-    resp += "\\n       shrug, dead, crab";
-    resp += "\\nSystem: status, help, hack, muhack";
-    resp += "\\n";
-    resp += "\\nhack   - Take exclusive control";
-    resp += "\\nmuhack - Release control to all";
-    server.send(200, "application/json", "{\"response\":\"" + resp + "\"}");
-    return;
-  }
-
-  // --- For all other commands, check hack lock ---
-  if (isHackBlocked())
-  {
-    server.send(200, "application/json", "{\"response\":\"ACCESS DENIED. Robot is under exclusive control.\\nWait for 'muhack' to be issued.\",\"locked\":true}");
-    return;
-  }
-
-  // --- Movement commands ---
-  if (cmdLower == "forward" || cmdLower == "backward" || cmdLower == "left" || cmdLower == "right")
-  {
-    currentCommand = cmdLower;
-    recordInput();
-    Display::exitIdle();
-    server.send(200, "application/json", "{\"response\":\"Executing: " + cmdLower + "\"}");
-    return;
-  }
-
-  if (cmdLower == "stop")
-  {
-    currentCommand = "";
-    recordInput();
-    server.send(200, "application/json", "{\"response\":\"All movement stopped.\"}");
-    return;
-  }
-
-  // --- Pose commands ---
-  String validPoses[] = {"rest", "stand", "wave", "dance", "swim", "point", "pushup", "bow", "cute", "freaky", "worm", "shake", "shrug", "dead", "crab"};
-  for (int i = 0; i < 15; i++)
-  {
-    if (cmdLower == validPoses[i])
-    {
-      currentCommand = cmdLower;
-      recordInput();
-      Display::exitIdle();
-      server.send(200, "application/json", "{\"response\":\"Pose: " + cmdLower + "\"}");
-      return;
-    }
-  }
-
-  // --- Unknown command ---
-  server.send(200, "application/json", "{\"response\":\"Unknown command: " + cmd + "\\nType 'help' for available commands.\"}");
-}
-
-/**
- * @brief Handle the legacy URL-encoded command endpoint used by the web UI.
- *
- * Accepts the following query parameters (mutually exclusive):
- *  - `pose=<name>`           : run a named pose.
- *  - `go=<dir>`              : start a movement gait.
- *  - `stop=1`                : abort the current command.
- *  - `motor=<id>&value=<a>`  : drive a single servo to angle @c a.
- */
-void handleCommandWeb()
-{
-  // Check hack lock for web UI commands too
-  if (isHackBlocked())
-  {
-    server.send(403, "text/plain", "LOCKED");
-    return;
-  }
-  // We send 200 OK immediately so the web browser doesn't hang waiting for animation to finish
-  if (server.hasArg("pose"))
-  {
-    currentCommand = server.arg("pose");
-    recordInput();
-    Display::exitIdle();
-    server.send(200, "text/plain", "OK");
-  }
-  else if (server.hasArg("go"))
-  {
-    currentCommand = server.arg("go");
-    recordInput();
-    Display::exitIdle();
-    server.send(200, "text/plain", "OK");
-  }
-  else if (server.hasArg("stop"))
-  {
-    currentCommand = "";
-    recordInput();
-    server.send(200, "text/plain", "OK");
-  }
-  else if (server.hasArg("motor") && server.hasArg("value"))
-  {
-    int motorNum = server.arg("motor").toInt();
-    int servoIdx = servoNameToIndex(server.arg("motor"));
-    int angle = server.arg("value").toInt();
-    if (motorNum >= 1 && motorNum <= 8 && angle >= 0 && angle <= 180)
-    {
-      Motors::setAngle(motorNum - 1, angle); // Convert 1-based to 0-based index
-      recordInput();
-      server.send(200, "text/plain", "OK");
-    }
-    else if (servoIdx != -1 && angle >= 0 && angle <= 180)
-    {
-      Motors::setAngle(servoIdx, angle);
-      recordInput();
-      server.send(200, "text/plain", "OK");
-    }
-    else
-    {
-      server.send(400, "text/plain", "Invalid motor or angle");
-    }
-  }
-  else
-  {
-    server.send(400, "text/plain", "Bad Args");
-  }
-}
-
-/**
- * @brief Return the live tunable parameters as JSON.
- */
-void handleGetSettings()
-{
-  String json = "{";
-  json += "\"frameDelay\":" + String(frameDelay) + ",";
-  json += "\"walkCycles\":" + String(walkCycles) + ",";
-  json += "\"motorCurrentDelay\":" + String(motorCurrentDelay) + ",";
-  json += "\"faceFps\":" + String(Display::faceFps);
-  json += "}";
-  server.send(200, "application/json", json);
-}
-
-/**
- * @brief Apply tunable parameters received as URL-encoded form fields.
- *
- * Recognised keys: `frameDelay`, `walkCycles`, `motorCurrentDelay`,
- * `faceFps`. Unknown keys are silently ignored.
- */
-void handleSetSettings()
-{
-  if (server.hasArg("frameDelay"))
-    frameDelay = server.arg("frameDelay").toInt();
-  if (server.hasArg("walkCycles"))
-    walkCycles = server.arg("walkCycles").toInt();
-  if (server.hasArg("motorCurrentDelay"))
-    motorCurrentDelay = server.arg("motorCurrentDelay").toInt();
-  if (server.hasArg("faceFps"))
-    Display::faceFps = (int)max(1L, server.arg("faceFps").toInt());
-  server.send(200, "text/plain", "OK");
-}
-
-/**
- * @brief Expose the runtime status as a JSON document for remote clients.
- */
-void handleGetStatus()
-{
-  String json = "{";
-  json += "\"currentCommand\":\"" + currentCommand + "\",";
-  json += "\"currentFace\":\"" + Display::currentFaceName + "\",";
-  json += "\"networkConnected\":" + String(networkConnected ? "true" : "false") + ",";
-  json += "\"apIP\":\"" + WiFi.softAPIP().toString() + "\"";
-  if (networkConnected)
-  {
-    json += ",\"networkIP\":\"" + networkIP.toString() + "\"";
-  }
-  json += "}";
-  server.send(200, "application/json", json);
-}
-
-/**
- * @brief JSON command endpoint for network-side clients.
- *
- * Expects a POST with one of:
- *  - `{"command": "<name>", "face": "<face>"}`
- *  - `{"face": "<face>"}` (face-only update; no movement triggered)
- *
- * The body parser is intentionally minimal: it does not depend on a JSON
- * library and tolerates whitespace variants of `"command":` / `"face":`.
- */
-void handleApiCommand()
-{
-  if (server.method() != HTTP_POST)
-  {
-    server.send(405, "application/json", "{\"error\":\"Method not allowed\"}");
-    return;
-  }
-
-  String body = server.arg("plain");
-
-  Serial.println("API Command received:");
-  Serial.println(body);
-
-  // Check for face-only command (no movement)
-  int faceOnlyStart = body.indexOf("\"face\":\"");
-  if (faceOnlyStart == -1)
-  {
-    faceOnlyStart = body.indexOf("\"face\": \"");
-  }
-
-  // If we have a face but no command field, it's face-only
-  bool faceOnly = (faceOnlyStart > 0 && body.indexOf("\"command\":") == -1 && body.indexOf("\"command\": ") == -1);
-
-  String command = "";
-  String face = "";
-
-  // Parse face
-  if (faceOnlyStart > 0)
-  {
-    faceOnlyStart = body.indexOf("\"", faceOnlyStart + 6) + 1;
-    int faceEnd = body.indexOf("\"", faceOnlyStart);
-    if (faceEnd > faceOnlyStart)
-    {
-      face = body.substring(faceOnlyStart, faceEnd);
-      Serial.print("Parsed face: ");
-      Serial.println(face);
-    }
-  }
-
-  // Parse command (if not face-only)
-  if (!faceOnly)
-  {
-    int cmdStart = body.indexOf("\"command\":\"");
-    if (cmdStart == -1)
-    {
-      cmdStart = body.indexOf("\"command\": \"");
-    }
-
-    if (cmdStart == -1)
-    {
-      Serial.println("Error: command field not found");
-      server.send(400, "application/json", "{\"error\":\"Missing command field\"}");
-      return;
-    }
-
-    cmdStart = body.indexOf("\"", cmdStart + 10) + 1;
-    int cmdEnd = body.indexOf("\"", cmdStart);
-
-    if (cmdEnd <= cmdStart)
-    {
-      Serial.println("Error: invalid command format");
-      server.send(400, "application/json", "{\"error\":\"Invalid command format\"}");
-      return;
-    }
-
-    command = body.substring(cmdStart, cmdEnd);
-    Serial.print("Parsed command: ");
-    Serial.println(command);
-  }
-
-  // Set face if provided
-  if (face.length() > 0)
-  {
-    Display::set(face);
-  }
-
-  // If face-only, just acknowledge
-  if (faceOnly)
-  {
-    recordInput();
-    server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Face updated\"}");
-    return;
-  }
-
-  // Execute command
-  if (command == "stop")
-  {
-    currentCommand = "";
-    recordInput();
-    server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Command stopped\"}");
-  }
-  else
-  {
-    currentCommand = command;
-    recordInput();
-    Display::exitIdle();
-    server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Command executed\"}");
-  }
-}
+// HTTP handlers are now in src/web/web_server.cpp (Web namespace).
 
 // ============================================================================
 // BOOT / DISPLAY UTILITIES
@@ -643,13 +214,13 @@ void setup()
 
     if (WiFi.status() == WL_CONNECTED)
     {
-      networkConnected = true;
-      networkIP = WiFi.localIP();
+      Web::networkConnected = true;
+      Web::networkIP = WiFi.localIP();
       Serial.println();
       Serial.print("Connected to network! IP: ");
-      Serial.println(networkIP);
+      Serial.println(Web::networkIP);
       if (displayOk)
-        Display::bootMsg(("Net: " + networkIP.toString()).c_str());
+        Display::bootMsg(("Net: " + Web::networkIP.toString()).c_str());
     }
     else
     {
@@ -668,9 +239,9 @@ void setup()
   // Build WiFi info text and hand it to the display module.
   // myIP is already set to the static AP_IP — no need to call softAPIP().
   String wifiInfoText;
-  if (networkConnected)
+  if (Web::networkConnected)
   {
-    wifiInfoText = "AP: " + String(AP_SSID) + " (" + myIP.toString() + ")  |  Network: " + String(NETWORK_SSID) + " (" + networkIP.toString() + ") or " + deviceHostname + ".local  |  ";
+    wifiInfoText = "AP: " + String(AP_SSID) + " (" + myIP.toString() + ")  |  Network: " + String(NETWORK_SSID) + " (" + Web::networkIP.toString() + ") or " + Web::deviceHostname + ".local  |  ";
   }
   else
   {
@@ -678,33 +249,8 @@ void setup()
   }
   Display::setMarqueeText(wifiInfoText);
 
-  // Start mDNS responder for local network discovery
-  if (MDNS.begin(deviceHostname.c_str()))
-  {
-    Serial.println("mDNS responder started");
-    MDNS.addService("http", "tcp", 80);
-  }
-  else
-  {
-    Serial.println("mDNS failed - not critical, continuing.");
-  }
-
-  // Start DNS Server for Captive Portal
-  if (apOk)
-  {
-    dnsServer.start(DNS_PORT, "*", myIP);
-  }
-
-  // Web Server Routes
-  server.on("/", handleRoot);
-  server.on("/cmd", handleCommandWeb);
-  server.on("/getSettings", handleGetSettings);
-  server.on("/setSettings", handleSetSettings);
-  server.on("/terminal", handleTerminalCmd);
-  server.on("/api/status", handleGetStatus);
-  server.on("/api/command", handleApiCommand);
-  server.onNotFound(handleRoot);
-  server.begin();
+  // Start DNS captive-portal trap, mDNS, and HTTP server
+  Web::init(apOk, myIP);
 
   // === SERVO INIT (AFTER WiFi to spread current draw over time) ===
   // PWM timer allocation and per-servo stagger are handled inside Motors::init().
@@ -736,10 +282,8 @@ void setup()
  */
 void loop()
 {
-  // Process DNS requests for captive portal
-  dnsServer.processNextRequest();
-
-  server.handleClient();
+  // Drain DNS captive-portal queue and handle HTTP requests
+  Web::pump();
   Display::tickFace();
   Display::tickIdle();
   Display::tickMarquee();
@@ -1015,8 +559,7 @@ void delayWithFace(unsigned long ms)
   while (millis() - start < ms)
   {
     Display::tickFace();
-    server.handleClient();
-    dnsServer.processNextRequest();
+    Web::pump();
     delay(5);
   }
 }
@@ -1026,8 +569,7 @@ bool pressingCheck(String cmd, int ms)
   unsigned long start = millis();
   while (millis() - start < ms)
   {
-    server.handleClient();
-    dnsServer.processNextRequest();
+    Web::pump();
     Display::tickFace();
     if (currentCommand != cmd)
     {
