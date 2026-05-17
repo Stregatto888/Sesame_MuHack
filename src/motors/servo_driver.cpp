@@ -1,19 +1,10 @@
 #include "motors/servo_driver.h"
+#include "core/tasks.h"
 
 #include <ESP32Servo.h>
 
-// ============================================================================
-// TEMPORARY PHASE-1 DEPENDENCIES (still defined in main.cpp)
-// These externs will be eliminated progressively in Phase 4 and Phase 5
-// when the motor task receives commands via FreeRTOS queues.
-// ============================================================================
-
-/// Pause after each servo write to spread current draw (ms). Lives in main.cpp.
+// motorCurrentDelay remains a global in main.cpp (Phase 6 will protect it).
 extern int motorCurrentDelay;
-
-/// Cooperative delay that keeps the OLED animation and network stack alive.
-/// Defined in main.cpp; will be replaced by vTaskDelay in Phase 5.
-extern void delayWithFace(unsigned long ms);
 
 // ============================================================================
 // SERVO LABELS

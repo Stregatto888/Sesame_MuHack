@@ -1,18 +1,17 @@
 #include "motors/poses.h"
 #include "motors/servo_driver.h"
 #include "display/face_engine.h"
+#include "core/tasks.h"
 
 // ============================================================================
-// TEMPORARY PHASE-1/2 DEPENDENCIES (still defined in main.cpp)
-// These externs will be replaced by FreeRTOS queue reads in Phase 4/5.
+// PHASE-1/2 DEPENDENCIES (still defined in main.cpp)
+// frameDelay, walkCycles, currentCommand remain global for Phase 5;
+// thread-safe accessors are added in Phase 6.
 // ============================================================================
 
-extern int frameDelay;        ///< Inter-frame pause used by gait routines (ms).
-extern int walkCycles;        ///< Repetitions per locomotion gait invocation.
-extern String currentCommand; ///< Active command string — will become a queue in Phase 4.
-
-extern void delayWithFace(unsigned long ms);
-extern bool pressingCheck(String cmd, int ms);
+extern int    frameDelay;
+extern int    walkCycles;
+extern String currentCommand;
 
 // Convenience alias so pose bodies read naturally.
 // Motors::setAngle is the canonical call; this alias is removed in Phase 5.

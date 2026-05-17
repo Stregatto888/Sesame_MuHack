@@ -229,6 +229,7 @@ the cooperative scheduler.
 | `src/main.cpp` | Added `#include "core/command_queue.h"`; `CmdQueue::init()` at end of `setup()`; `loop()` calls `CmdQueue::pop()` to update `currentCommand` before dispatching |
 
 **Design decisions:**
+
 - Queue depth = 4, items are `char[32]` (no heap allocation in HTTP callback context).
 - Queue is **last-write-wins**: if full, oldest item is dropped and new one enqueued.
   This preserves the original `currentCommand = cmd` semantics.
@@ -237,6 +238,7 @@ the cooperative scheduler.
 - Serial CLI commands still write `currentCommand` directly (same execution context, no concurrency).
 
 **Verification:**
+
 ```
 pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
 ```
@@ -247,7 +249,47 @@ pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
 
 ## Phase 5 — Split into 3 FreeRTOS Tasks
 
-_(To be filled after Phase 5 implementation)_
+**Goal:** Replace the cooperative `loop()` with three dedicated FreeRTOS tasks.
+`loop()` now yields forever; web/display/motor logic each runs in its own task.
+
+**Files added / changed:**
+
+| File | Change |
+|---|---|
+| `include/core/tasks.h` | New — `Tasks::startAll()`, `delayWithFace()`, `pressingCheck()` declarations |
+| `src/core/tasks.cpp` | New — `taskWeb` (p1/8KB), `taskDisplay` (p1/4KB), `taskMotor` (p2/8KB); `delayWithFace()` → `vTaskDelay`; `pressingCheck()` → `CmdQueue::pop()` + `vTaskDelay(5)` |
+| `src/main.cpp` | Added `#include "core/tasks.h"`; removed `delayWithFace`/`pressingCheck`/`recordInput` implementations; `loop()` → `vTaskDelay(portMAX_DELAY)`; `setup()` calls `CmdQueue::init()` then `Tasks::startAll()` |
+| `src/motors/poses.cpp` | Replaced `extern void delayWithFace` + `extern bool pressingCheck` inline decls with `#include "core/tasks.h"` |
+| `src/motors/servo_driver.cpp` | Replaced `extern void delayWithFace` inline decl with `#include "core/tasks.h"` |
+
+**Task design:**
+
+| Task | Priority | Stack | Body |
+|---|---|---|---|
+| `taskWeb` | 1 | 8 KB | `Web::pump()` + `vTaskDelay(1 ms)` |
+| `taskDisplay` | 1 | 4 KB | `Display::tickFace/Idle/Marquee()` + `vTaskDelay(10 ms)` |
+| `taskMotor` | 2 | 8 KB | `CmdQueue::pop()` + dispatcher + serial CLI + `vTaskDelay(1 ms)` |
+
+**Design decisions:**
+
+- `delayWithFace(ms)` → `vTaskDelay(pdMS_TO_TICKS(ms))`: web and display are driven
+  by their own tasks, so spin-polling is no longer needed inside pose/gait routines.
+- `pressingCheck(cmd, ms)` polls `CmdQueue::pop()` every 5 ms instead of checking
+  `currentCommand` directly; ensures interrupt-responsiveness inside long gaits.
+- `currentCommand` remains a plain global in `main.cpp` for Phase 5; reads/writes are
+  still unprotected — that is addressed in Phase 6.
+- `recordInput()` is inlined as `Display::notifyInput()` inside `tasks.cpp`.
+- `frameDelay`, `walkCycles`, `motorCurrentDelay` stay as `extern` globals for Phase 5.
+- Arduino `loop()` uses `vTaskDelay(portMAX_DELAY)` — the standard pattern for handing
+  full control to FreeRTOS tasks on Arduino-ESP32.
+
+**Verification:**
+
+```
+pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
+```
+
+**Commit:** _to be filled_
 
 ---
 
