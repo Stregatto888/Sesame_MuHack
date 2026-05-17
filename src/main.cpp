@@ -66,39 +66,7 @@
 #include "face-bitmaps.h"
 #include "movement-sequences.h"
 #include "captive-portal.h"
-
-// ============================================================================
-// NETWORK CONFIGURATION
-// ============================================================================
-
-/// SSID broadcast by the on-board soft access point.
-#define AP_SSID "Sesame MuHack"
-/// Pre-shared key for @ref AP_SSID. Must be at least 8 characters.
-#define AP_PASS "12345678"
-
-/// Optional upstream SSID joined when ::ENABLE_NETWORK_MODE is true.
-#define NETWORK_SSID ""
-/// Pre-shared key for @ref NETWORK_SSID.
-#define NETWORK_PASS ""
-/// When `true` the robot also tries to associate to ::NETWORK_SSID at boot.
-#define ENABLE_NETWORK_MODE false
-
-/// Static IP exposed by the soft AP. Avoids `softAPIP()` hangs on ESP32-S2.
-#define AP_IP IPAddress(192, 168, 4, 1)
-#define AP_GATEWAY IPAddress(192, 168, 4, 1)
-#define AP_SUBNET IPAddress(255, 255, 255, 0)
-
-// ============================================================================
-// HARDWARE CONFIGURATION
-// ============================================================================
-
-#define SCREEN_WIDTH 128   ///< OLED width in pixels.
-#define SCREEN_HEIGHT 64   ///< OLED height in pixels.
-#define OLED_RESET -1      ///< Reset pin shared with the MCU.
-#define OLED_I2C_ADDR 0x3C ///< 7-bit I²C address of the SSD1306.
-
-#define I2C_SDA 35 ///< I²C data line for the Lolin S2 Mini wiring.
-#define I2C_SCL 33 ///< I²C clock line for the Lolin S2 Mini wiring.
+#include "core/config.h"
 
 // ============================================================================
 // PERIPHERAL INSTANCES
@@ -106,7 +74,6 @@
 
 /// DNS server intercepting every query so the captive portal auto-pops up.
 DNSServer dnsServer;
-const byte DNS_PORT = 53;
 
 /// SSD1306 face display.
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -123,7 +90,7 @@ WebServer server(80);
 // Sesame Distro Board pinouts are kept commented for reference.
 //
 
-Servo servos[8];
+Servo servos[SERVO_COUNT];
 
 // Sesame Distro Board V2 pinout
 // const int servoPins[8] = {4, 5, 6, 7, 15, 16, 17, 18};
@@ -131,19 +98,19 @@ Servo servos[8];
 // Sesame Distro Board V1 pinout
 // const int servoPins[8] = {15, 2, 23, 19, 4, 16, 17, 18};
 
-/// Active servo-to-GPIO mapping (Lolin S2 Mini).
-const int servoPins[8] = {1, 2, 4, 6, 8, 10, 13, 14};
+/// Active servo-to-GPIO mapping (Lolin S2 Mini) — defined in core/config.h.
+const int (&servoPins)[SERVO_COUNT] = SERVO_PINS;
 
 /// Per-channel sub-trim, in degrees, applied on top of every commanded angle.
-int8_t servoSubtrim[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+int8_t servoSubtrim[SERVO_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 // ============================================================================
 // ANIMATION TIMING
 // ============================================================================
 
-int frameDelay = 100;       ///< Inter-frame delay used by gait routines (ms).
-int walkCycles = 10;        ///< Gait repetitions per walk/turn invocation.
-int motorCurrentDelay = 20; ///< Pause after each servo write to spread current.
+int frameDelay = DEFAULT_FRAME_DELAY;             ///< Inter-frame delay used by gait routines (ms).
+int walkCycles = DEFAULT_WALK_CYCLES;             ///< Gait repetitions per walk/turn invocation.
+int motorCurrentDelay = DEFAULT_MOTOR_CURRENT_DELAY; ///< Pause after each servo write to spread current.
 
 // ============================================================================
 // FACE ANIMATION STATE
@@ -155,7 +122,7 @@ const unsigned char *const *currentFaceFrames = nullptr; ///< Frame array.
 uint8_t currentFaceFrameCount = 0;                       ///< Frames in array.
 uint8_t currentFaceFrameIndex = 0;                       ///< Index played next.
 unsigned long lastFaceFrameMs = 0;                       ///< millis() of last frame.
-int faceFps = 8;                                         ///< Default FPS fallback.
+int faceFps = DEFAULT_FACE_FPS;                          ///< Default FPS fallback.
 FaceAnimMode currentFaceMode = FACE_ANIM_LOOP;           ///< Current mode.
 int8_t faceFrameDirection = 1;                           ///< 1=fwd, -1=rev.
 bool faceAnimFinished = false;                           ///< Once-mode flag.
@@ -183,7 +150,7 @@ String wifiInfoText = "";           ///< Pre-rendered marquee text.
 
 bool networkConnected = false;          ///< STA association status.
 IPAddress networkIP;                    ///< IP obtained on the upstream LAN.
-String deviceHostname = "sesame-robot"; ///< mDNS hostname.
+String deviceHostname = DEVICE_HOSTNAME; ///< mDNS hostname.
 
 bool hackLocked = false;  ///< Exclusive-control flag.
 IPAddress hackOwnerIP;    ///< Client owning the lock.
@@ -204,8 +171,7 @@ struct FaceEntry
   uint8_t maxFrames;                  ///< Capacity of @ref frames.
 };
 
-/// Maximum number of frames per face supported by ::MAKE_FACE_FRAMES.
-static const uint8_t MAX_FACE_FRAMES = 6;
+// MAX_FACE_FRAMES is defined in core/config.h
 
 /// Expand an `FACE_LIST` entry into a six-slot frame array.
 #define MAKE_FACE_FRAMES(name)                                         \
@@ -932,12 +898,12 @@ void setup()
   ESP32PWM::allocateTimer(2);
   ESP32PWM::allocateTimer(3);
 
-  for (int i = 0; i < 8; i++)
+  for (int i = 0; i < SERVO_COUNT; i++)
   {
-    servos[i].setPeriodHertz(50);
-    servos[i].attach(servoPins[i], 732, 2929);
-    servos[i].write(90); // Immediately set to 90° before attaching next
-    delay(150);          // Let servo settle + spread current draw
+    servos[i].setPeriodHertz(SERVO_PWM_HZ);
+    servos[i].attach(servoPins[i], SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US);
+    servos[i].write(SERVO_INIT_ANGLE); // Immediately set to neutral before attaching next
+    delay(SERVO_ATTACH_STAGGER_MS);    // Let servo settle + spread current draw
   }
 
   // Show rest face on startup
@@ -1134,7 +1100,7 @@ void loop()
         else if (strcmp(command_buffer, "subtrim") == 0 || strcmp(command_buffer, "st") == 0)
         {
           Serial.println("Subtrim values:");
-          for (int i = 0; i < 8; i++)
+          for (int i = 0; i < SERVO_COUNT; i++)
           {
             Serial.print("Motor ");
             Serial.print(i);
@@ -1147,18 +1113,18 @@ void loop()
         else if (strcmp(command_buffer, "subtrim save") == 0 || strcmp(command_buffer, "st save") == 0)
         {
           Serial.println("Copy and paste this into your code:");
-          Serial.print("int8_t servoSubtrim[8] = {");
-          for (int i = 0; i < 8; i++)
+          Serial.print("int8_t servoSubtrim[SERVO_COUNT] = {");
+          for (int i = 0; i < SERVO_COUNT; i++)
           {
             Serial.print(servoSubtrim[i]);
-            if (i < 7)
+            if (i < SERVO_COUNT - 1)
               Serial.print(", ");
           }
           Serial.println("};");
         }
         else if (strncmp(command_buffer, "subtrim reset", 13) == 0 || strncmp(command_buffer, "st reset", 8) == 0)
         {
-          for (int i = 0; i < 8; i++)
+          for (int i = 0; i < SERVO_COUNT; i++)
             servoSubtrim[i] = 0;
           Serial.println("All subtrim values reset to 0");
         }
@@ -1168,7 +1134,7 @@ void loop()
           int trimMotor, trimValue;
           if (sscanf(params, "%d %d", &trimMotor, &trimValue) == 2)
           {
-            if (trimMotor >= 0 && trimMotor < 8)
+            if (trimMotor >= 0 && trimMotor < SERVO_COUNT)
             {
               if (trimValue >= -90 && trimValue <= 90)
               {
@@ -1195,7 +1161,7 @@ void loop()
         {
           if (sscanf(command_buffer + 4, "%d", &angle) == 1)
           {
-            for (int i = 0; i < 8; i++)
+            for (int i = 0; i < SERVO_COUNT; i++)
               setServoAngle(i, angle);
             Serial.print("All servos set to ");
             Serial.println(angle);
@@ -1203,7 +1169,7 @@ void loop()
         }
         else if (sscanf(command_buffer, "%d %d", &motorNum, &angle) == 2)
         {
-          if (motorNum >= 0 && motorNum < 8)
+          if (motorNum >= 0 && motorNum < SERVO_COUNT)
           {
             setServoAngle(motorNum, angle);
             Serial.print("Servo ");
@@ -1531,7 +1497,7 @@ void updateIdleBlink()
  */
 void setServoAngle(uint8_t channel, int angle)
 {
-  if (channel < 8)
+  if (channel < SERVO_COUNT)
   {
     int adjustedAngle = constrain(angle + servoSubtrim[channel], 0, 180);
     Serial.print(F("[DEBUG] setServoAngle: ch="));
@@ -1615,7 +1581,7 @@ void updateWifiInfoScroll()
   unsigned long now = millis();
 
   // Check if 30 seconds have passed without input
-  if (!showingWifiInfo && (now - lastInputTime >= 30000))
+  if (!showingWifiInfo && (now - lastInputTime >= WIFI_MARQUEE_IDLE_MS))
   {
     showingWifiInfo = true;
     wifiScrollPos = 0;
@@ -1626,7 +1592,7 @@ void updateWifiInfoScroll()
     return;
 
   // Update scroll every 150ms
-  if (now - lastWifiScrollMs >= 150)
+  if (now - lastWifiScrollMs >= WIFI_MARQUEE_TICK_MS)
   {
     lastWifiScrollMs = now;
 
@@ -1653,7 +1619,7 @@ void updateWifiInfoScroll()
     display.display();
 
     // Advance scroll position
-    wifiScrollPos += 2;
+    wifiScrollPos += WIFI_MARQUEE_SCROLL_PX;
     if (wifiScrollPos >= (int)(wifiInfoText.length() * 6))
     {
       wifiScrollPos = 0;
