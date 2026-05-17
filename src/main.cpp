@@ -1,3 +1,58 @@
+/**
+ * @file main.cpp
+ * @brief Firmware entry-point and run-time orchestration for the Sesame
+ *        MuHack robot.
+ * @author Luca - MuHack
+ *
+ * The Sesame MuHack robot is an eight-servo hobby quadruped powered by a
+ * Lolin S2 Mini (ESP32-S2) board, equipped with an SSD1306 128x64 OLED
+ * "face" and an embedded Wi-Fi captive portal that exposes a remote
+ * control panel and a hacker-themed terminal.
+ *
+ * ## High-level architecture
+ *
+ * @code
+ *      ┌──────────────────────────────────────────────────────────┐
+ *      │                       loop()                              │
+ *      │                                                            │
+ *      │  ┌────────────┐   ┌──────────────┐   ┌─────────────────┐ │
+ *      │  │ DNS / HTTP │   │ Face animator│   │ Idle / scrolling│ │
+ *      │  └─────┬──────┘   └──────┬───────┘   └────────┬────────┘ │
+ *      │        │                  │                    │          │
+ *      │        ▼                  ▼                    ▼          │
+ *      │  ┌──────────────────────────────────────────────────────┐ │
+ *      │  │              currentCommand dispatcher               │ │
+ *      │  │  forward / backward / left / right / pose-by-name    │ │
+ *      │  └──────────────────────────────────────────────────────┘ │
+ *      │        │                                                  │
+ *      │        ▼                                                  │
+ *      │  ┌──────────────────────────────────────────────────────┐ │
+ *      │  │  Pose / gait routines (movement-sequences.h)         │ │
+ *      │  │     ↓                                                │ │
+ *      │  │  setServoAngle()  ← drives the eight ESP32Servo      │ │
+ *      │  │  setFace*()       ← drives the OLED face renderer    │ │
+ *      │  └──────────────────────────────────────────────────────┘ │
+ *      └──────────────────────────────────────────────────────────┘
+ * @endcode
+ *
+ * ## Operating modes
+ *  - **Soft AP**: always enabled, ESSID `Sesame MuHack`, captive portal
+ *    served on `http://192.168.4.1/`.
+ *  - **Station mode**: optional, controlled by ::ENABLE_NETWORK_MODE. When
+ *    enabled the robot also joins an upstream Wi-Fi network and exposes
+ *    itself through mDNS as `sesame-robot.local`.
+ *  - **Hack lock**: a single client can claim exclusive control via the
+ *    embedded terminal (`hack` to lock, `muhack` to release).
+ *
+ * @see captive-portal.h
+ * @see face-bitmaps.h
+ * @see movement-sequences.h
+ */
+
+// ============================================================================
+// INCLUDES
+// ============================================================================
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -7,110 +62,152 @@
 #include <ESP32Servo.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+
 #include "face-bitmaps.h"
 #include "movement-sequences.h"
 #include "captive-portal.h"
 
-// --- Access Point Configuration ---
-// This is the network the Robot will create
+// ============================================================================
+// NETWORK CONFIGURATION
+// ============================================================================
+
+/// SSID broadcast by the on-board soft access point.
 #define AP_SSID "Sesame MuHack"
-#define AP_PASS "12345678" // Must be at least 8 characters
+/// Pre-shared key for @ref AP_SSID. Must be at least 8 characters.
+#define AP_PASS "12345678"
 
-// --- Station Mode Configuration (Optional) ---
-// Set these to connect to your home/office WiFi network
-// Leave NETWORK_SSID empty or set ENABLE_NETWORK_MODE to false to disable
-#define NETWORK_SSID ""           // Your WiFi network name
-#define NETWORK_PASS ""           // Your WiFi password
-#define ENABLE_NETWORK_MODE false // Set to true to enable network connection attempts
+/// Optional upstream SSID joined when ::ENABLE_NETWORK_MODE is true.
+#define NETWORK_SSID ""
+/// Pre-shared key for @ref NETWORK_SSID.
+#define NETWORK_PASS ""
+/// When `true` the robot also tries to associate to ::NETWORK_SSID at boot.
+#define ENABLE_NETWORK_MODE false
 
-// Static IP for the Access Point (avoids softAPIP() hang on ESP32-S2)
+/// Static IP exposed by the soft AP. Avoids `softAPIP()` hangs on ESP32-S2.
 #define AP_IP IPAddress(192, 168, 4, 1)
 #define AP_GATEWAY IPAddress(192, 168, 4, 1)
 #define AP_SUBNET IPAddress(255, 255, 255, 0)
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET -1
-#define OLED_I2C_ADDR 0x3C
+// ============================================================================
+// HARDWARE CONFIGURATION
+// ============================================================================
 
-// I2C Pins for S2 Mini Board
-#define I2C_SDA 35
-#define I2C_SCL 33
+#define SCREEN_WIDTH 128   ///< OLED width in pixels.
+#define SCREEN_HEIGHT 64   ///< OLED height in pixels.
+#define OLED_RESET -1      ///< Reset pin shared with the MCU.
+#define OLED_I2C_ADDR 0x3C ///< 7-bit I²C address of the SSD1306.
 
-// DNS Server for Captive Portal
+#define I2C_SDA 35 ///< I²C data line for the Lolin S2 Mini wiring.
+#define I2C_SCL 33 ///< I²C clock line for the Lolin S2 Mini wiring.
+
+// ============================================================================
+// PERIPHERAL INSTANCES
+// ============================================================================
+
+/// DNS server intercepting every query so the captive portal auto-pops up.
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
+/// SSD1306 face display.
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+/// HTTP server backing the captive portal and JSON command API.
 WebServer server(80);
 
-// Global state for animations
-String currentCommand = "";
-String currentFaceName = "default";
-const unsigned char *const *currentFaceFrames = nullptr;
-uint8_t currentFaceFrameCount = 0;
-uint8_t currentFaceFrameIndex = 0;
-unsigned long lastFaceFrameMs = 0;
-int faceFps = 8;
-FaceAnimMode currentFaceMode = FACE_ANIM_LOOP;
-int8_t faceFrameDirection = 1;
-bool faceAnimFinished = false;
-int currentFaceFps = 0;
-bool idleActive = false;
-bool idleBlinkActive = false;
-unsigned long nextIdleBlinkMs = 0;
-uint8_t idleBlinkRepeatsLeft = 0;
+// ============================================================================
+// SERVO ROUTING
+// ============================================================================
+//
+// Pin numbers correspond to the ESP32 GPIOs and depend on the carrier board.
+// The active configuration below targets the **Lolin S2 Mini**. Two legacy
+// Sesame Distro Board pinouts are kept commented for reference.
+//
 
-// WiFi Info Scrolling
-unsigned long lastInputTime = 0;
-bool firstInputReceived = false;
-bool showingWifiInfo = false;
-int wifiScrollPos = 0;
-unsigned long lastWifiScrollMs = 0;
-String wifiInfoText = "";
-
-// Network Mode
-bool networkConnected = false;
-IPAddress networkIP;
-String deviceHostname = "sesame-robot";
-
-// Hack Lock System
-bool hackLocked = false;
-IPAddress hackOwnerIP;
-String hackOwnerMAC = "";
-
-// Servo Pins for Distro Board
-// ======================================================================
-// Pin numbers are coorisponding to the ESP32 GPIO pins and may differ based on which board you use.
-// If you are using a different board, please adjust the servoPins array accordingly.
-// ======================================================================
 Servo servos[8];
-// Sesame Distro Board V2 Pinout
+
+// Sesame Distro Board V2 pinout
 // const int servoPins[8] = {4, 5, 6, 7, 15, 16, 17, 18};
 
-// Sesame Distro Board Pinout
+// Sesame Distro Board V1 pinout
 // const int servoPins[8] = {15, 2, 23, 19, 4, 16, 17, 18};
 
-// Lolin S2 Mini Pinout
+/// Active servo-to-GPIO mapping (Lolin S2 Mini).
 const int servoPins[8] = {1, 2, 4, 6, 8, 10, 13, 14};
 
-// Subtrim values for each servo (offset in degrees)
+/// Per-channel sub-trim, in degrees, applied on top of every commanded angle.
 int8_t servoSubtrim[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
-// Animation constants
-int frameDelay = 100;
-int walkCycles = 10;
-int motorCurrentDelay = 20; // ms delay between motor movements to prevent over-current
+// ============================================================================
+// ANIMATION TIMING
+// ============================================================================
 
+int frameDelay = 100;       ///< Inter-frame delay used by gait routines (ms).
+int walkCycles = 10;        ///< Gait repetitions per walk/turn invocation.
+int motorCurrentDelay = 20; ///< Pause after each servo write to spread current.
+
+// ============================================================================
+// FACE ANIMATION STATE
+// ============================================================================
+
+String currentCommand = "";                              ///< Active command from any UI.
+String currentFaceName = "default";                      ///< Face symbolic name.
+const unsigned char *const *currentFaceFrames = nullptr; ///< Frame array.
+uint8_t currentFaceFrameCount = 0;                       ///< Frames in array.
+uint8_t currentFaceFrameIndex = 0;                       ///< Index played next.
+unsigned long lastFaceFrameMs = 0;                       ///< millis() of last frame.
+int faceFps = 8;                                         ///< Default FPS fallback.
+FaceAnimMode currentFaceMode = FACE_ANIM_LOOP;           ///< Current mode.
+int8_t faceFrameDirection = 1;                           ///< 1=fwd, -1=rev.
+bool faceAnimFinished = false;                           ///< Once-mode flag.
+int currentFaceFps = 0;                                  ///< FPS for active face.
+
+bool idleActive = false;           ///< Idle face active?
+bool idleBlinkActive = false;      ///< Currently blinking?
+unsigned long nextIdleBlinkMs = 0; ///< Next blink schedule.
+uint8_t idleBlinkRepeatsLeft = 0;  ///< Pending double-blinks.
+
+// ============================================================================
+// STATUS BAR / WIFI INFO SCROLLING
+// ============================================================================
+
+unsigned long lastInputTime = 0;    ///< millis() of last received input.
+bool firstInputReceived = false;    ///< Set true after any user input.
+bool showingWifiInfo = false;       ///< Marquee currently active?
+int wifiScrollPos = 0;              ///< Marquee X offset, in pixels.
+unsigned long lastWifiScrollMs = 0; ///< millis() of last marquee tick.
+String wifiInfoText = "";           ///< Pre-rendered marquee text.
+
+// ============================================================================
+// NETWORK / HACK-LOCK STATE
+// ============================================================================
+
+bool networkConnected = false;          ///< STA association status.
+IPAddress networkIP;                    ///< IP obtained on the upstream LAN.
+String deviceHostname = "sesame-robot"; ///< mDNS hostname.
+
+bool hackLocked = false;  ///< Exclusive-control flag.
+IPAddress hackOwnerIP;    ///< Client owning the lock.
+String hackOwnerMAC = ""; ///< Reserved for future MAC lock.
+
+// ============================================================================
+// FACE DISPATCH TABLE (built from FACE_LIST)
+// ============================================================================
+
+/**
+ * @struct FaceEntry
+ * @brief Bind a symbolic face name to its bitmap frame array.
+ */
 struct FaceEntry
 {
-  const char *name;
-  const unsigned char *const *frames;
-  uint8_t maxFrames;
+  const char *name;                   ///< Lowercase identifier.
+  const unsigned char *const *frames; ///< Pointer to the frame array.
+  uint8_t maxFrames;                  ///< Capacity of @ref frames.
 };
 
+/// Maximum number of frames per face supported by ::MAKE_FACE_FRAMES.
 static const uint8_t MAX_FACE_FRAMES = 6;
 
+/// Expand an `FACE_LIST` entry into a six-slot frame array.
 #define MAKE_FACE_FRAMES(name)                                         \
   const unsigned char *const face_##name##_frames[] = {                \
       epd_bitmap_##name, epd_bitmap_##name##_1, epd_bitmap_##name##_2, \
@@ -121,18 +218,24 @@ FACE_LIST
 #undef X
 #undef MAKE_FACE_FRAMES
 
+/// Runtime registry mapping face names to their frame arrays.
 const FaceEntry faceEntries[] = {
 #define X(name) {#name, face_##name##_frames, MAX_FACE_FRAMES},
     FACE_LIST
 #undef X
     {"default", face_defualt_frames, MAX_FACE_FRAMES}};
 
+/**
+ * @struct FaceFpsEntry
+ * @brief Override default playback rate for a single face.
+ */
 struct FaceFpsEntry
 {
-  const char *name;
-  uint8_t fps;
+  const char *name; ///< Face identifier (lowercase).
+  uint8_t fps;      ///< Frame-rate to apply to @ref name.
 };
 
+/// Per-face FPS overrides. Faces missing here fall back to ::faceFps.
 const FaceFpsEntry faceFpsEntries[] = {
     {"walk", 1},
     {"rest", 1},
@@ -153,7 +256,7 @@ const FaceFpsEntry faceFpsEntries[] = {
     {"idle", 1},
     {"idle_blink", 7},
     {"default", 1},
-    // Conversational faces (manually controlled by Python - no auto-animation)
+    // Conversational faces are driven externally (no auto-animation).
     {"happy", 1},
     {"talk_happy", 1},
     {"sad", 1},
@@ -174,7 +277,10 @@ const FaceFpsEntry faceFpsEntries[] = {
     {"talk_thinking", 1},
 };
 
-// Prototypes
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+
 void setServoAngle(uint8_t channel, int angle);
 void updateFaceBitmap(const unsigned char *bitmap);
 void setFace(const String &faceName);
@@ -196,12 +302,32 @@ void recordInput();
 void handleTerminalCmd();
 bool isHackBlocked();
 
+// ============================================================================
+// HTTP HANDLERS - CAPTIVE PORTAL
+// ============================================================================
+
+/**
+ * @brief Serve the embedded captive-portal landing page.
+ * @see captive-portal.h
+ */
 void handleRoot()
 {
   server.send(200, "text/html", index_html);
 }
 
-// Check if the current request is blocked by hack lock
+// ============================================================================
+// HACK-LOCK HELPERS
+// ============================================================================
+
+/**
+ * @brief Check whether the current HTTP request is denied by the hack lock.
+ *
+ * When @ref hackLocked is set, only the IP address recorded in
+ * @ref hackOwnerIP is allowed to drive the robot.
+ *
+ * @return `true` if the request comes from a non-owner client while the
+ *         lock is engaged.
+ */
 bool isHackBlocked()
 {
   if (!hackLocked)
@@ -210,6 +336,23 @@ bool isHackBlocked()
   return (clientIP != hackOwnerIP);
 }
 
+// ============================================================================
+// HTTP HANDLERS - TERMINAL & COMMAND API
+// ============================================================================
+
+/**
+ * @brief Handle text commands issued through the embedded terminal page.
+ *
+ * Recognises the following keywords:
+ *  - `hack`    : take exclusive control of the robot.
+ *  - `muhack`  : release exclusive control (only by the lock owner).
+ *  - `status`  : dump the current runtime state.
+ *  - `help`    : list available commands.
+ *  - movement  : `forward`, `backward`, `left`, `right`, `stop`.
+ *  - poses     : `rest`, `stand`, `wave`, ... (see ::validPoses below).
+ *
+ * Replies are JSON-encoded and consumed by the JavaScript front-end.
+ */
 void handleTerminalCmd()
 {
   if (!server.hasArg("cmd"))
@@ -332,6 +475,15 @@ void handleTerminalCmd()
   server.send(200, "application/json", "{\"response\":\"Unknown command: " + cmd + "\\nType 'help' for available commands.\"}");
 }
 
+/**
+ * @brief Handle the legacy URL-encoded command endpoint used by the web UI.
+ *
+ * Accepts the following query parameters (mutually exclusive):
+ *  - `pose=<name>`           : run a named pose.
+ *  - `go=<dir>`              : start a movement gait.
+ *  - `stop=1`                : abort the current command.
+ *  - `motor=<id>&value=<a>`  : drive a single servo to angle @c a.
+ */
 void handleCommandWeb()
 {
   // Check hack lock for web UI commands too
@@ -389,6 +541,9 @@ void handleCommandWeb()
   }
 }
 
+/**
+ * @brief Return the live tunable parameters as JSON.
+ */
 void handleGetSettings()
 {
   String json = "{";
@@ -400,6 +555,12 @@ void handleGetSettings()
   server.send(200, "application/json", json);
 }
 
+/**
+ * @brief Apply tunable parameters received as URL-encoded form fields.
+ *
+ * Recognised keys: `frameDelay`, `walkCycles`, `motorCurrentDelay`,
+ * `faceFps`. Unknown keys are silently ignored.
+ */
 void handleSetSettings()
 {
   if (server.hasArg("frameDelay"))
@@ -413,7 +574,9 @@ void handleSetSettings()
   server.send(200, "text/plain", "OK");
 }
 
-// API endpoint for network clients to get robot status
+/**
+ * @brief Expose the runtime status as a JSON document for remote clients.
+ */
 void handleGetStatus()
 {
   String json = "{";
@@ -429,7 +592,16 @@ void handleGetStatus()
   server.send(200, "application/json", json);
 }
 
-// API endpoint for network clients to send commands (JSON-based)
+/**
+ * @brief JSON command endpoint for network-side clients.
+ *
+ * Expects a POST with one of:
+ *  - `{"command": "<name>", "face": "<face>"}`
+ *  - `{"face": "<face>"}` (face-only update; no movement triggered)
+ *
+ * The body parser is intentionally minimal: it does not depend on a JSON
+ * library and tolerates whitespace variants of `"command":` / `"face":`.
+ */
 void handleApiCommand()
 {
   if (server.method() != HTTP_POST)
@@ -530,6 +702,16 @@ void handleApiCommand()
   }
 }
 
+// ============================================================================
+// BOOT / DISPLAY UTILITIES
+// ============================================================================
+
+/**
+ * @brief Print a boot-time message both on the serial console and the OLED.
+ *
+ * @param msg    Null-terminated string to display.
+ * @param clear  When `true` clear the OLED frame buffer before drawing.
+ */
 void displayBootMsg(const char *msg, bool clear = false)
 {
   if (clear)
@@ -542,10 +724,19 @@ void displayBootMsg(const char *msg, bool clear = false)
   Serial.println(msg);
 }
 
+// ============================================================================
+// ARDUINO ENTRY POINTS
+// ============================================================================
+
+/**
+ * @brief One-shot initialization: serial, I²C, OLED, Wi-Fi, mDNS, HTTP, servos.
+ *
+ * The boot sequence is intentionally non-blocking: the robot continues
+ * even if the OLED is missing or the AP fails to come up, because the
+ * physical control loop only depends on the servos.
+ */
 void setup()
 {
-  Serial.begin(115200);
-  delay(500); // Let USB CDC stabilize on S2 Mini
   randomSeed(micros());
 
   // I2C Init for ESP32
@@ -760,6 +951,17 @@ void setup()
   Serial.println(myIP);
 }
 
+/**
+ * @brief Cooperative main loop.
+ *
+ * Drives, in this order:
+ *  -# DNS captive portal pump.
+ *  -# HTTP request servicing.
+ *  -# OLED face animator and idle-blink scheduler.
+ *  -# Wi-Fi info marquee while waiting for the first input.
+ *  -# Dispatch of the active command to the matching pose / gait routine.
+ *  -# Optional serial CLI for diagnostics and sub-trim tuning.
+ */
 void loop()
 {
   // Process DNS requests for captive portal
@@ -1024,7 +1226,13 @@ void loop()
   }
 }
 
-// Function to update the robot's face
+// ============================================================================
+// FACE RENDERING
+// ============================================================================
+
+/**
+ * @brief Push a single 128x64 monochrome bitmap to the OLED.
+ */
 void updateFaceBitmap(const unsigned char *bitmap)
 {
   display.clearDisplay();
@@ -1032,6 +1240,16 @@ void updateFaceBitmap(const unsigned char *bitmap)
   display.display();
 }
 
+/**
+ * @brief Count consecutive non-null frame pointers starting at @p frames.
+ *
+ * Stops at the first `nullptr` slot, which is how the runtime infers the
+ * length of a face animation declared via the `MAKE_FACE_FRAMES` macro.
+ *
+ * @param frames    Frame pointer array (may be `nullptr`).
+ * @param maxFrames Capacity of @p frames.
+ * @return Number of valid frames available for playback.
+ */
 uint8_t countFrames(const unsigned char *const *frames, uint8_t maxFrames)
 {
   if (frames == nullptr || frames[0] == nullptr)
@@ -1046,6 +1264,15 @@ uint8_t countFrames(const unsigned char *const *frames, uint8_t maxFrames)
   return count;
 }
 
+/**
+ * @brief Switch the OLED to the requested face by symbolic name.
+ *
+ * Resets the per-face animation state and immediately renders the first
+ * frame. If @p faceName is unknown the runtime falls back to the
+ * `default` face entry.
+ *
+ * @param faceName Symbolic name (case-insensitive). See @ref FACE_LIST.
+ */
 void setFace(const String &faceName)
 {
   if (faceName == currentFaceName && currentFaceFrames != nullptr)
@@ -1087,6 +1314,9 @@ void setFace(const String &faceName)
   }
 }
 
+/**
+ * @brief Override the playback strategy of the currently displayed face.
+ */
 void setFaceMode(FaceAnimMode mode)
 {
   currentFaceMode = mode;
@@ -1094,12 +1324,21 @@ void setFaceMode(FaceAnimMode mode)
   faceAnimFinished = false;
 }
 
+/**
+ * @brief Convenience wrapper combining @ref setFaceMode and @ref setFace.
+ */
 void setFaceWithMode(const String &faceName, FaceAnimMode mode)
 {
   setFaceMode(mode);
   setFace(faceName);
 }
 
+/**
+ * @brief Look up the per-face FPS override.
+ *
+ * @param faceName Face identifier (case-insensitive).
+ * @return The per-face override, or the global ::faceFps fallback.
+ */
 int getFaceFpsForName(const String &faceName)
 {
   for (size_t i = 0; i < (sizeof(faceFpsEntries) / sizeof(faceFpsEntries[0])); i++)
@@ -1112,6 +1351,15 @@ int getFaceFpsForName(const String &faceName)
   return faceFps;
 }
 
+/**
+ * @brief Advance the face animation according to the active mode.
+ *
+ * Implements three strategies:
+ *  - ::FACE_ANIM_LOOP       : modular increment, never stops.
+ *  - ::FACE_ANIM_ONCE       : stops on the last frame and sets
+ *                             @ref faceAnimFinished.
+ *  - ::FACE_ANIM_BOOMERANG  : ping-pongs between the first and last frame.
+ */
 void updateAnimatedFace()
 {
   if (currentFaceFrames == nullptr || currentFaceFrameCount <= 1)
@@ -1174,6 +1422,13 @@ void updateAnimatedFace()
   }
 }
 
+/**
+ * @brief Cooperative @c delay() that keeps DNS, HTTP and face animation alive.
+ *
+ * Pose / gait routines call this helper instead of `delay()` so that the
+ * robot remains responsive (Wi-Fi clients, OLED updates, etc.) while a
+ * limb is in motion.
+ */
 void delayWithFace(unsigned long ms)
 {
   unsigned long start = millis();
@@ -1186,6 +1441,13 @@ void delayWithFace(unsigned long ms)
   }
 }
 
+// ============================================================================
+// IDLE BEHAVIOR
+// ============================================================================
+
+/**
+ * @brief Schedule the next idle blink within the [@p minMs, @p maxMs] window.
+ */
 void scheduleNextIdleBlink(unsigned long minMs, unsigned long maxMs)
 {
   unsigned long now = millis();
@@ -1193,6 +1455,9 @@ void scheduleNextIdleBlink(unsigned long minMs, unsigned long maxMs)
   nextIdleBlinkMs = now + interval;
 }
 
+/**
+ * @brief Activate the idle face and arm the random blink scheduler.
+ */
 void enterIdle()
 {
   idleActive = true;
@@ -1202,12 +1467,22 @@ void enterIdle()
   scheduleNextIdleBlink(3000, 7000);
 }
 
+/**
+ * @brief Leave the idle state without altering the currently shown face.
+ */
 void exitIdle()
 {
   idleActive = false;
   idleBlinkActive = false;
 }
 
+/**
+ * @brief Drive the idle blink state machine.
+ *
+ * When the idle face is active this routine periodically swaps to the
+ * `idle_blink` animation (sometimes a double-blink) before returning to
+ * the ambient idle face.
+ */
 void updateIdleBlink()
 {
   if (!idleActive)
@@ -1243,7 +1518,17 @@ void updateIdleBlink()
   }
 }
 
-// ====== HELPERS ======
+// ============================================================================
+// LOW-LEVEL SERVO / INPUT HELPERS
+// ============================================================================
+
+/**
+ * @brief Drive a servo channel to the given angle, respecting per-channel
+ *        sub-trim and the inter-write current-spread delay.
+ *
+ * @param channel Servo index (0..7). Calls with @p channel >= 8 are ignored.
+ * @param angle   Desired angle in degrees (0..180), pre-trim.
+ */
 void setServoAngle(uint8_t channel, int angle)
 {
   if (channel < 8)
@@ -1260,6 +1545,18 @@ void setServoAngle(uint8_t channel, int angle)
   }
 }
 
+/**
+ * @brief Cooperative wait that aborts as soon as the current command changes.
+ *
+ * Used by gait routines to abandon a multi-step pattern within one frame
+ * when the user issues a new command (e.g. switching from `forward` to
+ * `right`).
+ *
+ * @param cmd Command string the gait expects to remain active.
+ * @param ms  Maximum wait time in milliseconds.
+ * @return `true` if @p cmd is still active after @p ms ms;
+ *         `false` if it changed (the routine also calls @ref runStandPose).
+ */
 bool pressingCheck(String cmd, int ms)
 {
   unsigned long start = millis();
@@ -1278,6 +1575,9 @@ bool pressingCheck(String cmd, int ms)
   return true;
 }
 
+/**
+ * @brief Mark the time of the latest user input and dismiss the marquee.
+ */
 void recordInput()
 {
   lastInputTime = millis();
@@ -1288,6 +1588,13 @@ void recordInput()
   }
 }
 
+/**
+ * @brief Render the Wi-Fi connection-info marquee on the OLED.
+ *
+ * The marquee scrolls across the top row over the currently shown face
+ * until the first user input arrives or the user explicitly dismisses it
+ * via @ref recordInput.
+ */
 void updateWifiInfoScroll()
 {
   // Don't show WiFi info if first input has been received

@@ -1,12 +1,39 @@
+/**
+ * @file captive-portal.h
+ * @brief Embedded HTML/CSS/JS for the Sesame MuHack captive portal
+ * @author Luca - MuHack
+ *
+ * Self-contained, single-page web interface served by the on-board
+ * `WebServer` instance whenever a client connects to the
+ * `Sesame MuHack` Wi-Fi access point. The page is stored in PROGMEM and
+ * delivered verbatim by `handleRoot()` in main.cpp.
+ *
+ * ## Responsibilities
+ *  - Captive portal landing page (auto-opened by mobile devices via DNS
+ *    redirect to the AP IP).
+ *  - Robot remote control panel (movement, poses, face presets).
+ *  - Live status read-out (current command, face, hack-lock state).
+ *  - Interactive `MuHack` themed terminal hitting `/terminal`.
+ *
+ * The page uses no external runtime dependencies aside from a Google
+ * Fonts stylesheet; the rest of the assets (CSS, JavaScript) are inlined
+ * to guarantee the portal works without internet access.
+ *
+ * @see main.cpp
+ */
+
 #pragma once
 
 #include <Arduino.h>
 
-// ======================================================================
-// --- WEB INTERFACE HTML ---
-// MuHack-themed Sesame Robot Controller
-// ======================================================================
-
+// ============================================================================
+// EMBEDDED WEB INTERFACE
+// ============================================================================
+//
+// MuHack-themed Sesame Robot controller landing page. The whole asset is
+// stored as a PROGMEM raw string literal so the ESP32-S2 doesn't need to
+// load a filesystem to serve it.
+//
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
 <head>
