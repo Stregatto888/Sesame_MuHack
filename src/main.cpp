@@ -57,6 +57,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include "core/config.h"
+#include "core/command_queue.h"
 #include "display/face_engine.h"
 #include "motors/servo_driver.h"
 #include "motors/poses.h"
@@ -267,6 +268,10 @@ void setup()
   Serial.println(AP_SSID);
   Serial.print(F("AP IP: "));
   Serial.println(myIP);
+
+  // Initialise command queue (must be after FreeRTOS scheduler is running,
+  // which is guaranteed by the time setup() executes on Arduino-ESP32).
+  CmdQueue::init();
 }
 
 /**
@@ -287,6 +292,14 @@ void loop()
   Display::tickFace();
   Display::tickIdle();
   Display::tickMarquee();
+
+  // Pop the next queued command (from web handlers or serial CLI) and make
+  // it the active command. An empty string means "stop".
+  {
+    String incoming;
+    if (CmdQueue::pop(incoming))
+      currentCommand = incoming;
+  }
 
   if (currentCommand != "")
   {

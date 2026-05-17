@@ -216,7 +216,32 @@ pio run   →  SUCCESS  RAM 17.0%  Flash 71.4%
 
 ## Phase 4 — FreeRTOS Queue Plumbing
 
-_(To be filled after Phase 4 implementation)_
+**Goal:** Introduce a FreeRTOS queue between web/serial producers and the motor
+dispatcher consumer, without yet creating separate RTOS tasks. `loop()` remains
+the cooperative scheduler.
+
+**Files added / changed:**
+| File | Change |
+|---|---|
+| `include/core/command_queue.h` | New — `CmdQueue::` namespace: `init()`, `push()`, `pop()` |
+| `src/core/command_queue.cpp` | New — FreeRTOS `QueueHandle_t` wrapper (char-array items, depth 4) |
+| `src/web/web_server.cpp` | All `currentCommand = X` writes replaced with `CmdQueue::push(X)`; `currentCommand` kept as read-only extern for status reporting |
+| `src/main.cpp` | Added `#include "core/command_queue.h"`; `CmdQueue::init()` at end of `setup()`; `loop()` calls `CmdQueue::pop()` to update `currentCommand` before dispatching |
+
+**Design decisions:**
+- Queue depth = 4, items are `char[32]` (no heap allocation in HTTP callback context).
+- Queue is **last-write-wins**: if full, oldest item is dropped and new one enqueued.
+  This preserves the original `currentCommand = cmd` semantics.
+- `currentCommand` (in `main.cpp`) is still updated by the dispatcher — it now reflects
+  what the motor is actually executing. Web handlers read it as `extern` for status endpoints.
+- Serial CLI commands still write `currentCommand` directly (same execution context, no concurrency).
+
+**Verification:**
+```
+pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
+```
+
+**Commit:** _to be filled_
 
 ---
 

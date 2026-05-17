@@ -6,14 +6,16 @@
 //   - Hack-lock state (hackLocked / hackOwnerIP / hackOwnerMAC)
 //   - Network connection state (networkConnected / networkIP / deviceHostname)
 //
-// Shared state consumed via extern (defined in main.cpp):
-//   - String currentCommand  — command written by handlers, dispatched in loop()
-//   - int    frameDelay, walkCycles, motorCurrentDelay — tunable timing params
+// Shared state used:
+//   - CmdQueue::push()       — enqueue motor commands (write path)
+//   - extern currentCommand  — read-only: reflects what the dispatcher is running
+//   - extern frameDelay, walkCycles, motorCurrentDelay — tunable timing params
 // ============================================================================
 
 #include "web/web_server.h"
 #include "web/web_assets.h"
 #include "core/config.h"
+#include "core/command_queue.h"
 #include "display/face_engine.h"
 #include "motors/servo_driver.h"
 
@@ -25,7 +27,7 @@
 // ---------------------------------------------------------------------------
 // Shared state defined in main.cpp
 // ---------------------------------------------------------------------------
-extern String currentCommand;
+extern String currentCommand; ///< Read-only here: shows the active dispatched command.
 extern int    frameDelay;
 extern int    walkCycles;
 extern int    motorCurrentDelay;
@@ -177,7 +179,7 @@ static void handleTerminalCmd()
   // --- Movement commands ---
   if (cmdLower == "forward" || cmdLower == "backward" || cmdLower == "left" || cmdLower == "right")
   {
-    currentCommand = cmdLower;
+    CmdQueue::push(cmdLower);
     Display::notifyInput();
     Display::exitIdle();
     server.send(200, "application/json", "{\"response\":\"Executing: " + cmdLower + "\"}");
@@ -186,7 +188,7 @@ static void handleTerminalCmd()
 
   if (cmdLower == "stop")
   {
-    currentCommand = "";
+    CmdQueue::push("");
     Display::notifyInput();
     server.send(200, "application/json", "{\"response\":\"All movement stopped.\"}");
     return;
@@ -198,7 +200,7 @@ static void handleTerminalCmd()
   {
     if (cmdLower == validPoses[i])
     {
-      currentCommand = cmdLower;
+      CmdQueue::push(cmdLower);
       Display::notifyInput();
       Display::exitIdle();
       server.send(200, "application/json", "{\"response\":\"Pose: " + cmdLower + "\"}");
@@ -222,21 +224,21 @@ static void handleCommandWeb()
   }
   if (server.hasArg("pose"))
   {
-    currentCommand = server.arg("pose");
+    CmdQueue::push(server.arg("pose"));
     Display::notifyInput();
     Display::exitIdle();
     server.send(200, "text/plain", "OK");
   }
   else if (server.hasArg("go"))
   {
-    currentCommand = server.arg("go");
+    CmdQueue::push(server.arg("go"));
     Display::notifyInput();
     Display::exitIdle();
     server.send(200, "text/plain", "OK");
   }
   else if (server.hasArg("stop"))
   {
-    currentCommand = "";
+    CmdQueue::push("");
     Display::notifyInput();
     server.send(200, "text/plain", "OK");
   }
@@ -401,13 +403,13 @@ static void handleApiCommand()
   // Execute command
   if (command == "stop")
   {
-    currentCommand = "";
+    CmdQueue::push("");
     Display::notifyInput();
     server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Command stopped\"}");
   }
   else
   {
-    currentCommand = command;
+    CmdQueue::push(command);
     Display::notifyInput();
     Display::exitIdle();
     server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Command executed\"}");
