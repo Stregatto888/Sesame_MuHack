@@ -1,196 +1,39 @@
-/**
- * @file movement-sequences.h
- * @brief Servo choreography and pose primitives for the Sesame MuHack robot
- * @author Luca - MuHack
- *
- * Defines the eight-servo kinematic addressing scheme, the OLED face animation
- * mode flags shared with the rendering pipeline, and the inline pose / gait
- * routines invoked by the main control loop.
- *
- * ## Servo Layout
- *
- * The robot exposes eight independent servos arranged as four limbs (one per
- * quadrant). Each limb has a *hip* (Rx/Lx with x in {1, 2}) and a *foot*
- * (Rx/Lx with x in {3, 4}) joint, mirrored on the right (R) and left (L)
- * sides:
- *
- * @code
- *      R1 ── HIP-FRONT-RIGHT       L1 ── HIP-FRONT-LEFT
- *      R2 ── HIP-BACK-RIGHT        L2 ── HIP-BACK-LEFT
- *      R3 ── FOOT-FRONT-RIGHT      L3 ── FOOT-FRONT-LEFT
- *      R4 ── FOOT-BACK-RIGHT       L4 ── FOOT-BACK-LEFT
- * @endcode
- *
- * The numeric indices follow the physical wiring on the carrier board and
- * therefore *do not* match the lexicographic order of the servo names.
- *
- * ## Pose Conventions
- *  - Every pose ends by re-entering the canonical @ref runStandPose and
- *    clearing `currentCommand` so the dispatcher in main.cpp returns to the
- *    idle state.
- *  - Movement gaits (`runWalkPose`, `runWalkBackward`, `runTurnLeft`,
- *    `runTurnRight`) periodically poll @ref pressingCheck so they can be
- *    interrupted within one frame when the user issues a new command.
- *  - Face animations are triggered through @ref setFaceWithMode, keeping
- *    the OLED expression in sync with the currently performed pose.
- *
- * @see face-bitmaps.h
- * @see main.cpp
- */
-
-#pragma once
-
-#include <Arduino.h>
+#include "motors/poses.h"
+#include "motors/servo_driver.h"
 
 // ============================================================================
-// SERVO ADDRESSING
+// TEMPORARY PHASE-1 DEPENDENCIES (still defined in main.cpp)
+// These externs will be replaced by FreeRTOS queue reads in Phase 4/5.
 // ============================================================================
 
-/**
- * @enum ServoName
- * @brief Symbolic identifiers for the eight robot servos.
- *
- * The numeric values map directly to the index used on the `servos[]` array
- * declared in main.cpp. Reordering these constants will *break* the runtime
- * pin assignment.
- */
-enum ServoName : uint8_t
-{
-  R1 = 0, ///< Hip, front right
-  R2 = 1, ///< Hip, back right
-  L1 = 2, ///< Hip, front left
-  L2 = 3, ///< Hip, back left
-  R4 = 4, ///< Foot, back right
-  R3 = 5, ///< Foot, front right
-  L3 = 6, ///< Foot, front left
-  L4 = 7  ///< Foot, back left
-};
+extern int frameDelay;        ///< Inter-frame pause used by gait routines (ms).
+extern int walkCycles;        ///< Repetitions per locomotion gait invocation.
+extern String currentCommand; ///< Active command string — will become a queue in Phase 4.
 
-/// Human-readable servo labels, ordered to match @ref ServoName values.
-const String ServoNames[] = {"R1", "R2", "L1", "L2", "R4", "R3", "L3", "L4"};
-
-/**
- * @brief Resolve a servo label (e.g. `"R1"`, `"L3"`) to its @ref ServoName index.
- * @param servo Two-character canonical servo identifier.
- * @return The matching @ref ServoName value, or `-1` when the label is unknown.
- */
-inline int servoNameToIndex(const String &servo)
-{
-  if (servo == "L1")
-    return L1;
-  if (servo == "L2")
-    return L2;
-  if (servo == "L3")
-    return L3;
-  if (servo == "L4")
-    return L4;
-  if (servo == "R1")
-    return R1;
-  if (servo == "R2")
-    return R2;
-  if (servo == "R3")
-    return R3;
-  if (servo == "R4")
-    return R4;
-  return -1;
-}
-
-// ============================================================================
-// FACE ANIMATION CONTRACT
-// ============================================================================
-
-/**
- * @enum FaceAnimMode
- * @brief Playback strategy for OLED face animation sequences.
- *
- * Consumed by @ref setFaceMode / @ref setFaceWithMode in main.cpp to drive
- * the per-frame state machine implemented in `updateAnimatedFace()`.
- */
-enum FaceAnimMode : uint8_t
-{
-  FACE_ANIM_LOOP = 0,     ///< Cycle frames forever (e.g. ambient idle).
-  FACE_ANIM_ONCE = 1,     ///< Play once and freeze on the last frame.
-  FACE_ANIM_BOOMERANG = 2 ///< Play forwards then backwards, repeat.
-};
-
-// ============================================================================
-// EXTERNAL DEPENDENCIES PROVIDED BY main.cpp
-// ============================================================================
-
-extern int frameDelay;        ///< Per-frame pause used by gait routines (ms).
-extern int walkCycles;        ///< Number of repetitions per locomotion pose.
-extern String currentCommand; ///< Active command string driving the dispatcher.
-
-/// Drive the requested servo to @p angle, applying per-channel sub-trim.
-extern void setServoAngle(uint8_t channel, int angle);
-/// Switch to the requested face by symbolic name.
 extern void setFace(const String &faceName);
-/// Override the playback mode of the currently displayed face.
 extern void setFaceMode(FaceAnimMode mode);
-/// Convenience helper combining @ref setFace and @ref setFaceMode.
 extern void setFaceWithMode(const String &faceName, FaceAnimMode mode);
-/// Cooperative delay that keeps the OLED animation running.
 extern void delayWithFace(unsigned long ms);
-/// Enter the idle state (ambient face + scheduled blinks).
 extern void enterIdle();
-/// Verify that @p cmd is still pressed during a @p ms long window.
 extern bool pressingCheck(String cmd, int ms);
 
-// ============================================================================
-// POSE / GAIT PROTOTYPES
-// ============================================================================
-
-void runRestPose();
-void runStandPose(int face = 1);
-void runWavePose();
-void runDancePose();
-void runSwimPose();
-void runPointPose();
-void runPushupPose();
-void runBowPose();
-void runCutePose();
-void runFreakyPose();
-void runWormPose();
-void runShakePose();
-void runShrugPose();
-void runDeadPose();
-void runCrabPose();
-void runWalkPose();
-void runWalkBackward();
-void runTurnLeft();
-void runTurnRight();
+// Convenience alias so pose bodies read naturally.
+// Motors::setAngle is the canonical call; this alias is removed in Phase 5.
+static inline void setServoAngle(uint8_t ch, int angle) { Motors::setAngle(ch, angle); }
 
 // ============================================================================
 // STATIC POSES
 // ============================================================================
 
-/**
- * @brief Drop every servo to its mechanical center (90 degrees).
- *
- * Used as a soft "power down" pose: the robot relaxes its limbs and the
- * accompanying boomerang face hints at sleep.
- */
-inline void runRestPose()
+void runRestPose()
 {
   Serial.println(F("REST"));
   setFaceWithMode("rest", FACE_ANIM_BOOMERANG);
-  for (int i = 0; i < 8; i++)
-    setServoAngle(i, 90);
+  for (int i = 0; i < SERVO_COUNT; i++)
+    Motors::setAngle(i, 90);
 }
 
-/**
- * @brief Canonical "standing" calibration pose used as a return point.
- *
- * Applies a fixed limb configuration that lifts the body off the ground
- * and squares the feet. Almost every other pose ends by calling this
- * routine to leave the robot in a known geometry.
- *
- * @param face When `1` (default) play the matching face animation and
- *             trigger @ref enterIdle on completion. Set to `0` from
- *             intermediate transitions to avoid flooding the OLED with
- *             redundant state changes.
- */
-inline void runStandPose(int face)
+void runStandPose(int face)
 {
   Serial.println(F("STAND"));
   Serial.print(F("[DEBUG] runStandPose: entering stand pose, face="));
@@ -209,13 +52,7 @@ inline void runStandPose(int face)
     enterIdle();
 }
 
-/**
- * @brief Greeting wave performed with the front-left foot servo.
- *
- * Lifts the front-left foot four times while keeping the rest of the
- * skeleton anchored in the standing pose.
- */
-inline void runWavePose()
+void runWavePose()
 {
   Serial.println(F("WAVE"));
   setFaceWithMode("wave", FACE_ANIM_ONCE);
@@ -240,13 +77,7 @@ inline void runWavePose()
     currentCommand = "";
 }
 
-/**
- * @brief Side-to-side dance routine looping the dance face animation.
- *
- * Alternates the front-leg foot positions five times to produce the
- * trademark MuHack "shimmy".
- */
-inline void runDancePose()
+void runDancePose()
 {
   Serial.println(F("DANCE"));
   setFaceWithMode("dance", FACE_ANIM_LOOP);
@@ -277,18 +108,12 @@ inline void runDancePose()
     currentCommand = "";
 }
 
-/**
- * @brief Mimic a freestyle swim with synchronized hip motion.
- *
- * Cycles the hip joints between the standing geometry and the wide-open
- * swim geometry four times.
- */
-inline void runSwimPose()
+void runSwimPose()
 {
   Serial.println(F("SWIM"));
   setFaceWithMode("swim", FACE_ANIM_ONCE);
-  for (int i = 0; i < 8; i++)
-    setServoAngle(i, 90);
+  for (int i = 0; i < SERVO_COUNT; i++)
+    Motors::setAngle(i, 90);
   for (int i = 0; i < 4; i++)
   {
     setServoAngle(R1, 135);
@@ -307,13 +132,7 @@ inline void runSwimPose()
     currentCommand = "";
 }
 
-/**
- * @brief Static "pointing" gesture held for two seconds.
- *
- * Useful as a directional cue or in conjunction with the talking face
- * animations.
- */
-inline void runPointPose()
+void runPointPose()
 {
   Serial.println(F("POINT"));
   setFaceWithMode("point", FACE_ANIM_BOOMERANG);
@@ -331,13 +150,7 @@ inline void runPointPose()
     currentCommand = "";
 }
 
-/**
- * @brief Four-rep push-up routine.
- *
- * Dips the body towards the floor and back up by alternating the front
- * foot servos.
- */
-inline void runPushupPose()
+void runPushupPose()
 {
   Serial.println(F("PUSHUP"));
   setFaceWithMode("pushup", FACE_ANIM_ONCE);
@@ -362,10 +175,7 @@ inline void runPushupPose()
     currentCommand = "";
 }
 
-/**
- * @brief Slow ceremonial bow held for three seconds.
- */
-inline void runBowPose()
+void runBowPose()
 {
   Serial.println(F("BOW"));
   setFaceWithMode("bow", FACE_ANIM_ONCE);
@@ -388,10 +198,7 @@ inline void runBowPose()
     currentCommand = "";
 }
 
-/**
- * @brief "Cute" begging animation alternating the back-foot servos.
- */
-inline void runCutePose()
+void runCutePose()
 {
   Serial.println(F("CUTE"));
   setFaceWithMode("cute", FACE_ANIM_ONCE);
@@ -401,7 +208,6 @@ inline void runCutePose()
   setServoAngle(R2, 20);
   setServoAngle(R4, 180);
   setServoAngle(L4, 0);
-
   setServoAngle(L1, 0);
   setServoAngle(R1, 180);
   setServoAngle(L3, 180);
@@ -421,10 +227,7 @@ inline void runCutePose()
     currentCommand = "";
 }
 
-/**
- * @brief Erratic twitching animation paired with the freaky face.
- */
-inline void runFreakyPose()
+void runFreakyPose()
 {
   Serial.println(F("FREAKY"));
   setFaceWithMode("freaky", FACE_ANIM_ONCE);
@@ -449,10 +252,7 @@ inline void runFreakyPose()
     currentCommand = "";
 }
 
-/**
- * @brief Body undulation reminiscent of an inchworm crawl (in place).
- */
-inline void runWormPose()
+void runWormPose()
 {
   Serial.println(F("WORM"));
   setFaceWithMode("worm", FACE_ANIM_ONCE);
@@ -485,10 +285,7 @@ inline void runWormPose()
     currentCommand = "";
 }
 
-/**
- * @brief Lateral shake driven by the back-foot servos.
- */
-inline void runShakePose()
+void runShakePose()
 {
   Serial.println(F("SHAKE"));
   setFaceWithMode("shake", FACE_ANIM_ONCE);
@@ -515,10 +312,7 @@ inline void runShakePose()
     currentCommand = "";
 }
 
-/**
- * @brief "Shrug" gesture combining a brief dead face with raised feet.
- */
-inline void runShrugPose()
+void runShrugPose()
 {
   Serial.println(F("SHRUG"));
   runStandPose(0);
@@ -540,13 +334,7 @@ inline void runShrugPose()
     currentCommand = "";
 }
 
-/**
- * @brief "Dead" pose: limbs straight and dead-face boomerang animation.
- *
- * Unlike most poses this routine does *not* return to the standing pose,
- * leaving the robot in a relaxed posture.
- */
-inline void runDeadPose()
+void runDeadPose()
 {
   Serial.println(F("DEAD"));
   runStandPose(0);
@@ -560,10 +348,7 @@ inline void runDeadPose()
     currentCommand = "";
 }
 
-/**
- * @brief Crab-walk style sideways shuffle, five oscillations.
- */
-inline void runCrabPose()
+void runCrabPose()
 {
   Serial.println(F("CRAB"));
   setFaceWithMode("crab", FACE_ANIM_ONCE);
@@ -598,23 +383,12 @@ inline void runCrabPose()
 // ============================================================================
 // LOCOMOTION GAITS
 // ============================================================================
-//
-// All gaits share a common skeleton:
-//   * Trigger the matching face animation.
-//   * Step through `walkCycles` repetitions.
-//   * Between each phase call @ref pressingCheck so a different command
-//     can interrupt the gait within a single frame.
-//   * On completion settle back into @ref runStandPose.
-//
 
-/**
- * @brief Forward walking gait built around a six-phase tripod-like pattern.
- */
-inline void runWalkPose()
+void runWalkPose()
 {
   Serial.println(F("WALK FWD"));
   setFaceWithMode("walk", FACE_ANIM_ONCE);
-  // Initial Step
+  // Initial step
   setServoAngle(R3, 135);
   setServoAngle(L3, 45);
   setServoAngle(R2, 100);
@@ -656,10 +430,7 @@ inline void runWalkPose()
   runStandPose(1);
 }
 
-/**
- * @brief Backward walking gait, mirrored from @ref runWalkPose.
- */
-inline void runWalkBackward()
+void runWalkBackward()
 {
   Serial.println(F("WALK BACK"));
   setFaceWithMode("walk", FACE_ANIM_ONCE);
@@ -700,10 +471,7 @@ inline void runWalkBackward()
   runStandPose(1);
 }
 
-/**
- * @brief Pivot turn to the left using two alternating leg sets.
- */
-inline void runTurnLeft()
+void runTurnLeft()
 {
   Serial.println(F("TURN LEFT"));
   setFaceWithMode("walk", FACE_ANIM_ONCE);
@@ -747,10 +515,7 @@ inline void runTurnLeft()
   runStandPose(1);
 }
 
-/**
- * @brief Pivot turn to the right (mirror of @ref runTurnLeft).
- */
-inline void runTurnRight()
+void runTurnRight()
 {
   Serial.println(F("TURN RIGHT"));
   setFaceWithMode("walk", FACE_ANIM_ONCE);

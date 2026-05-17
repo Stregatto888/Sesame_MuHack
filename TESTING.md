@@ -81,34 +81,76 @@ been moved to `include/core/config.h`. The empty scaffold folders
 
 ## Phase 1 — Extract Motors Module
 
-*(To be filled after Phase 1 implementation)*
+**What changed**:
+- `include/motors/servo_driver.h` — `ServoName` and `FaceAnimMode` enums,
+  `Motors::init()` and `Motors::setAngle()` declarations, `Motors::subtrim[]`.
+- `src/motors/servo_driver.cpp` — all servo hardware logic: PWM timer
+  allocation, servo attach sequence, angle writes with subtrim.
+- `include/motors/poses.h` — pose/gait function prototypes (declarations only).
+- `src/motors/poses.cpp` — all 19 `run*Pose` / `run*Gait` function bodies
+  (moved out of the old inline header).
+- `include/movement-sequences.h` — **deleted** (fully replaced by the above).
+- `src/main.cpp` — servo globals removed, `setServoAngle` replaced by
+  `Motors::setAngle`, `servoSubtrim` replaced by `Motors::subtrim`, servo init
+  replaced by `Motors::init()`.
+
+**Expected outcome**: Identical behaviour to Phase 0.
+
+### Test checklist
+
+1. **Boot** — identical to Phase 0: OLED boot messages appear, `rest` face
+   loads after startup. Serial Monitor should show `Init servos...` then
+   `=== Sesame Robot READY ===`.
+
+2. **All static poses** — using the web terminal or `/cmd?pose=<name>`, trigger
+   each of the 15 poses: `rest`, `stand`, `wave`, `dance`, `swim`, `point`,
+   `pushup`, `bow`, `cute`, `freaky`, `worm`, `shake`, `shrug`, `dead`, `crab`.
+   - Each pose must execute and the matching face must appear on the OLED.
+   - All poses except `dead` must return the robot to stand/rest.
+
+3. **Locomotion gaits** — trigger `forward`, `backward`, `left`, `right`.
+   - Robot must move for the configured number of `walkCycles` then stop.
+   - While moving, send a different command (e.g. send `right` during `forward`):
+     the robot must abort the current gait **within one frame** (~100 ms) and
+     start the new one. This verifies `pressingCheck` still works correctly.
+
+4. **Subtrim CLI (Serial Monitor)** — connect at 115200 baud:
+   - Type `st` → should print 8 subtrim values, all `+0`.
+   - Type `st 0 10` → servo 0 should shift 10° from its last commanded angle.
+   - Type `st save` → Serial output should print the `Motors::subtrim` array.
+   - Type `st reset` → all trims back to 0.
+
+5. **Individual motor control via web** — navigate to:
+   `http://192.168.4.1/cmd?motor=1&value=45`
+   - Servo 0 (R1) should move to 45°.
+   - Also test by servo name: `/cmd?motor=R1&value=45`.
 
 ---
 
 ## Phase 2 — Extract Display Module
 
-*(To be filled after Phase 2 implementation)*
+_(To be filled after Phase 2 implementation)_
 
 ---
 
 ## Phase 3 — Extract Web Module
 
-*(To be filled after Phase 3 implementation)*
+_(To be filled after Phase 3 implementation)_
 
 ---
 
 ## Phase 4 — FreeRTOS Queue Plumbing
 
-*(To be filled after Phase 4 implementation)*
+_(To be filled after Phase 4 implementation)_
 
 ---
 
 ## Phase 5 — Split into 3 FreeRTOS Tasks
 
-*(To be filled after Phase 5 implementation)*
+_(To be filled after Phase 5 implementation)_
 
 ---
 
 ## Phase 6 — Thread-Safety Hardening
 
-*(To be filled after Phase 6 implementation)*
+_(To be filled after Phase 6 implementation)_

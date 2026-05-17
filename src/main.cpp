@@ -59,14 +59,15 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Wire.h>
-#include <ESP32Servo.h>
+// ESP32Servo.h is included by motors/servo_driver.h transitively via servo_driver.cpp
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
 #include "face-bitmaps.h"
-#include "movement-sequences.h"
 #include "captive-portal.h"
 #include "core/config.h"
+#include "motors/servo_driver.h"
+#include "motors/poses.h"
 
 // ============================================================================
 // PERIPHERAL INSTANCES
@@ -85,24 +86,10 @@ WebServer server(80);
 // SERVO ROUTING
 // ============================================================================
 //
-// Pin numbers correspond to the ESP32 GPIOs and depend on the carrier board.
-// The active configuration below targets the **Lolin S2 Mini**. Two legacy
-// Sesame Distro Board pinouts are kept commented for reference.
+// Servo objects, pin mapping and subtrim values are now owned by the
+// Motors namespace in src/motors/servo_driver.cpp.
+// Access subtrim via Motors::subtrim[]  and servo writes via Motors::setAngle().
 //
-
-Servo servos[SERVO_COUNT];
-
-// Sesame Distro Board V2 pinout
-// const int servoPins[8] = {4, 5, 6, 7, 15, 16, 17, 18};
-
-// Sesame Distro Board V1 pinout
-// const int servoPins[8] = {15, 2, 23, 19, 4, 16, 17, 18};
-
-/// Active servo-to-GPIO mapping (Lolin S2 Mini) — defined in core/config.h.
-const int (&servoPins)[SERVO_COUNT] = SERVO_PINS;
-
-/// Per-channel sub-trim, in degrees, applied on top of every commanded angle.
-int8_t servoSubtrim[SERVO_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 // ============================================================================
 // ANIMATION TIMING
@@ -247,7 +234,6 @@ const FaceFpsEntry faceFpsEntries[] = {
 // FORWARD DECLARATIONS
 // ============================================================================
 
-void setServoAngle(uint8_t channel, int angle);
 void updateFaceBitmap(const unsigned char *bitmap);
 void setFace(const String &faceName);
 void setFaceMode(FaceAnimMode mode);
@@ -486,13 +472,13 @@ void handleCommandWeb()
     int angle = server.arg("value").toInt();
     if (motorNum >= 1 && motorNum <= 8 && angle >= 0 && angle <= 180)
     {
-      setServoAngle(motorNum - 1, angle); // Convert 1-based to 0-based index
+      Motors::setAngle(motorNum - 1, angle); // Convert 1-based to 0-based index
       recordInput();
       server.send(200, "text/plain", "OK");
     }
     else if (servoIdx != -1 && angle >= 0 && angle <= 180)
     {
-      setServoAngle(servoIdx, angle);
+      Motors::setAngle(servoIdx, angle);
       recordInput();
       server.send(200, "text/plain", "OK");
     }
@@ -890,21 +876,10 @@ void setup()
   server.begin();
 
   // === SERVO INIT (AFTER WiFi to spread current draw over time) ===
-  // Attach and write each servo ONE AT A TIME to prevent current spikes/brownout
+  // PWM timer allocation and per-servo stagger are handled inside Motors::init().
   if (displayOk)
     displayBootMsg("Init servos...");
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  ESP32PWM::allocateTimer(2);
-  ESP32PWM::allocateTimer(3);
-
-  for (int i = 0; i < SERVO_COUNT; i++)
-  {
-    servos[i].setPeriodHertz(SERVO_PWM_HZ);
-    servos[i].attach(servoPins[i], SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US);
-    servos[i].write(SERVO_INIT_ANGLE); // Immediately set to neutral before attaching next
-    delay(SERVO_ATTACH_STAGGER_MS);    // Let servo settle + spread current draw
-  }
+  Motors::init();
 
   // Show rest face on startup
   if (displayOk)
@@ -1105,18 +1080,18 @@ void loop()
             Serial.print("Motor ");
             Serial.print(i);
             Serial.print(": ");
-            if (servoSubtrim[i] >= 0)
+            if (Motors::subtrim[i] >= 0)
               Serial.print("+");
-            Serial.println(servoSubtrim[i]);
+            Serial.println(Motors::subtrim[i]);
           }
         }
         else if (strcmp(command_buffer, "subtrim save") == 0 || strcmp(command_buffer, "st save") == 0)
         {
           Serial.println("Copy and paste this into your code:");
-          Serial.print("int8_t servoSubtrim[SERVO_COUNT] = {");
+          Serial.print("int8_t Motors::subtrim[SERVO_COUNT] = {");
           for (int i = 0; i < SERVO_COUNT; i++)
           {
-            Serial.print(servoSubtrim[i]);
+            Serial.print(Motors::subtrim[i]);
             if (i < SERVO_COUNT - 1)
               Serial.print(", ");
           }
@@ -1125,7 +1100,7 @@ void loop()
         else if (strncmp(command_buffer, "subtrim reset", 13) == 0 || strncmp(command_buffer, "st reset", 8) == 0)
         {
           for (int i = 0; i < SERVO_COUNT; i++)
-            servoSubtrim[i] = 0;
+            Motors::subtrim[i] = 0;
           Serial.println("All subtrim values reset to 0");
         }
         else if (strncmp(command_buffer, "subtrim ", 8) == 0 || strncmp(command_buffer, "st ", 3) == 0)
@@ -1138,7 +1113,7 @@ void loop()
             {
               if (trimValue >= -90 && trimValue <= 90)
               {
-                servoSubtrim[trimMotor] = trimValue;
+                Motors::subtrim[trimMotor] = trimValue;
                 Serial.print("Motor ");
                 Serial.print(trimMotor);
                 Serial.print(" subtrim set to ");
@@ -1162,7 +1137,7 @@ void loop()
           if (sscanf(command_buffer + 4, "%d", &angle) == 1)
           {
             for (int i = 0; i < SERVO_COUNT; i++)
-              setServoAngle(i, angle);
+              Motors::setAngle(i, angle);
             Serial.print("All servos set to ");
             Serial.println(angle);
           }
@@ -1171,7 +1146,7 @@ void loop()
         {
           if (motorNum >= 0 && motorNum < SERVO_COUNT)
           {
-            setServoAngle(motorNum, angle);
+            Motors::setAngle(motorNum, angle);
             Serial.print("Servo ");
             Serial.print(motorNum);
             Serial.print(" set to ");
@@ -1485,44 +1460,8 @@ void updateIdleBlink()
 }
 
 // ============================================================================
-// LOW-LEVEL SERVO / INPUT HELPERS
+// BOOT / DISPLAY UTILITIES
 // ============================================================================
-
-/**
- * @brief Drive a servo channel to the given angle, respecting per-channel
- *        sub-trim and the inter-write current-spread delay.
- *
- * @param channel Servo index (0..7). Calls with @p channel >= 8 are ignored.
- * @param angle   Desired angle in degrees (0..180), pre-trim.
- */
-void setServoAngle(uint8_t channel, int angle)
-{
-  if (channel < SERVO_COUNT)
-  {
-    int adjustedAngle = constrain(angle + servoSubtrim[channel], 0, 180);
-    Serial.print(F("[DEBUG] setServoAngle: ch="));
-    Serial.print(channel);
-    Serial.print(F(" ("));
-    Serial.print(ServoNames[channel]);
-    Serial.print(F(") -> angle="));
-    Serial.println(adjustedAngle);
-    servos[channel].write(adjustedAngle);
-    delayWithFace(motorCurrentDelay);
-  }
-}
-
-/**
- * @brief Cooperative wait that aborts as soon as the current command changes.
- *
- * Used by gait routines to abandon a multi-step pattern within one frame
- * when the user issues a new command (e.g. switching from `forward` to
- * `right`).
- *
- * @param cmd Command string the gait expects to remain active.
- * @param ms  Maximum wait time in milliseconds.
- * @return `true` if @p cmd is still active after @p ms ms;
- *         `false` if it changed (the routine also calls @ref runStandPose).
- */
 bool pressingCheck(String cmd, int ms)
 {
   unsigned long start = millis();
