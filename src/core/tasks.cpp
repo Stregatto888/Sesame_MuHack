@@ -21,13 +21,12 @@
 #include <freertos/task.h>
 
 // ---------------------------------------------------------------------------
-// Shared state — still defined as globals in main.cpp for Phase 5.
-// Phase 6 will protect these with mutexes.
+// Shared state — still defined as globals in main.cpp.
+// The integer timing params were made std::atomic<int> in Phase 6;
+// they are not used directly in tasks.cpp (poses.cpp/servo_driver.cpp
+// hold their own extern declarations).
 // ---------------------------------------------------------------------------
 extern String currentCommand;
-extern int    frameDelay;
-extern int    walkCycles;
-extern int    motorCurrentDelay;
 
 // ---------------------------------------------------------------------------
 // Task stack / priority configuration

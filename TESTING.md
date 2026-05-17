@@ -254,21 +254,21 @@ pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
 
 **Files added / changed:**
 
-| File | Change |
-|---|---|
-| `include/core/tasks.h` | New — `Tasks::startAll()`, `delayWithFace()`, `pressingCheck()` declarations |
-| `src/core/tasks.cpp` | New — `taskWeb` (p1/8KB), `taskDisplay` (p1/4KB), `taskMotor` (p2/8KB); `delayWithFace()` → `vTaskDelay`; `pressingCheck()` → `CmdQueue::pop()` + `vTaskDelay(5)` |
-| `src/main.cpp` | Added `#include "core/tasks.h"`; removed `delayWithFace`/`pressingCheck`/`recordInput` implementations; `loop()` → `vTaskDelay(portMAX_DELAY)`; `setup()` calls `CmdQueue::init()` then `Tasks::startAll()` |
-| `src/motors/poses.cpp` | Replaced `extern void delayWithFace` + `extern bool pressingCheck` inline decls with `#include "core/tasks.h"` |
-| `src/motors/servo_driver.cpp` | Replaced `extern void delayWithFace` inline decl with `#include "core/tasks.h"` |
+| File                          | Change                                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `include/core/tasks.h`        | New — `Tasks::startAll()`, `delayWithFace()`, `pressingCheck()` declarations                                                                                                                                |
+| `src/core/tasks.cpp`          | New — `taskWeb` (p1/8KB), `taskDisplay` (p1/4KB), `taskMotor` (p2/8KB); `delayWithFace()` → `vTaskDelay`; `pressingCheck()` → `CmdQueue::pop()` + `vTaskDelay(5)`                                           |
+| `src/main.cpp`                | Added `#include "core/tasks.h"`; removed `delayWithFace`/`pressingCheck`/`recordInput` implementations; `loop()` → `vTaskDelay(portMAX_DELAY)`; `setup()` calls `CmdQueue::init()` then `Tasks::startAll()` |
+| `src/motors/poses.cpp`        | Replaced `extern void delayWithFace` + `extern bool pressingCheck` inline decls with `#include "core/tasks.h"`                                                                                              |
+| `src/motors/servo_driver.cpp` | Replaced `extern void delayWithFace` inline decl with `#include "core/tasks.h"`                                                                                                                             |
 
 **Task design:**
 
-| Task | Priority | Stack | Body |
-|---|---|---|---|
-| `taskWeb` | 1 | 8 KB | `Web::pump()` + `vTaskDelay(1 ms)` |
-| `taskDisplay` | 1 | 4 KB | `Display::tickFace/Idle/Marquee()` + `vTaskDelay(10 ms)` |
-| `taskMotor` | 2 | 8 KB | `CmdQueue::pop()` + dispatcher + serial CLI + `vTaskDelay(1 ms)` |
+| Task          | Priority | Stack | Body                                                             |
+| ------------- | -------- | ----- | ---------------------------------------------------------------- |
+| `taskWeb`     | 1        | 8 KB  | `Web::pump()` + `vTaskDelay(1 ms)`                               |
+| `taskDisplay` | 1        | 4 KB  | `Display::tickFace/Idle/Marquee()` + `vTaskDelay(10 ms)`         |
+| `taskMotor`   | 2        | 8 KB  | `CmdQueue::pop()` + dispatcher + serial CLI + `vTaskDelay(1 ms)` |
 
 **Design decisions:**
 
@@ -295,4 +295,49 @@ pio run   →  SUCCESS  RAM 17.0%  Flash 71.5%
 
 ## Phase 6 — Thread-Safety Hardening
 
-_(To be filled after Phase 6 implementation)_
+**Goal:** Eliminate data races between the three FreeRTOS tasks on all shared
+state variables identified in PLAN.md.
+
+**Files added / changed:**
+
+| File | Change |
+|---|---|
+| `include/display/face_engine.h` | Removed `extern String currentFaceName` and `extern int faceFps`; added `getCurrentFaceName()`, `getFaceFps()`, `setFaceFps(int)` thread-safe accessor declarations |
+| `src/display/face_engine.cpp` | Added `#include <freertos/semphr.h>`; `s_currentFaceName` and `s_faceFps` made private static; mutex `s_faceNameMutex` (SemaphoreHandle_t) for String; spinlock `s_faceMux` (portMUX_TYPE) for int; mutex created in `Display::init()`; `Display::set()` reads/writes name under mutex; `getFaceFpsForName()` and `tickFace()` read faceFps under spinlock; accessors `getCurrentFaceName()`, `getFaceFps()`, `setFaceFps()` implemented |
+| `src/main.cpp` | Added `#include <atomic>`; `frameDelay`, `walkCycles`, `motorCurrentDelay` changed from `int` to `std::atomic<int>` |
+| `src/web/web_server.cpp` | Added `#include <atomic>`; updated extern declarations to `std::atomic<int>`; replaced `Display::currentFaceName` reads with `Display::getCurrentFaceName()`; replaced `Display::faceFps` read/write with `Display::getFaceFps()` / `Display::setFaceFps()` |
+| `src/motors/poses.cpp` | Updated `extern int frameDelay/walkCycles` to `extern std::atomic<int>` |
+| `src/motors/servo_driver.cpp` | Updated `extern int motorCurrentDelay` to `extern std::atomic<int>` |
+| `src/core/tasks.cpp` | Removed unused `extern int` declarations for timing params |
+
+**Protection strategy:**
+
+| Shared variable | Writers | Readers | Mechanism |
+|---|---|---|---|
+| `currentCommand` | TaskMotor (queue pop, poses, serial CLI) | TaskWeb (status API) | FreeRTOS queue (Phase 4); read race accepted (String assign is fast, status-only) |
+| `s_currentFaceName` | TaskMotor (`Display::set()`) | TaskWeb (`handleGetStatus`, `handleTerminalCmd`) | `SemaphoreHandle_t` mutex — String heap ops require proper mutex, not spinlock |
+| `s_faceFps` | TaskWeb (`handleSetSettings`) | TaskDisplay (`tickFace` fallback) | `portENTER_CRITICAL` spinlock — int read/write, well under 1 µs |
+| `frameDelay`, `walkCycles`, `motorCurrentDelay` | TaskWeb (`handleSetSettings`) | TaskMotor (poses, servo_driver) | `std::atomic<int>` — hardware-atomic on Xtensa 32-bit + compiler fence |
+
+**Design decisions:**
+
+- `Display::set()` takes the mutex only for the short String copy at the start
+  (idempotency check) and at the end (write resolved name). The heavy face
+  lookup and I2C bitmap update happen outside the lock, keeping contention
+  minimal.
+- `portENTER_CRITICAL` is used only for bare `int` operations (< 1 µs).
+  `String` operations (heap alloc) are never inside a critical section.
+- `std::atomic<int>` with default `seq_cst` ordering is transparent to all
+  callers — `operator int()` and `operator=(int)` make all existing read/write
+  sites compile unchanged.
+- `currentCommand` read in `handleGetStatus` / `handleTerminalCmd` is not
+  explicitly locked — this reflects the plan's note that it is "already
+  resolved via queue" for the write path. The status read is best-effort.
+
+**Verification:**
+
+```
+pio run   →  SUCCESS  RAM 17.0%  Flash 71.6%
+```
+
+**Commit:** _to be filled_

@@ -56,6 +56,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <atomic>
 #include "core/config.h"
 #include "core/command_queue.h"
 #include "core/tasks.h"
@@ -76,9 +77,9 @@
 // ANIMATION TIMING
 // ============================================================================
 
-int frameDelay = DEFAULT_FRAME_DELAY;             ///< Inter-frame delay used by gait routines (ms).
-int walkCycles = DEFAULT_WALK_CYCLES;             ///< Gait repetitions per walk/turn invocation.
-int motorCurrentDelay = DEFAULT_MOTOR_CURRENT_DELAY; ///< Pause after each servo write to spread current.
+std::atomic<int> frameDelay{DEFAULT_FRAME_DELAY};             ///< Inter-frame delay used by gait routines (ms).
+std::atomic<int> walkCycles{DEFAULT_WALK_CYCLES};             ///< Gait repetitions per walk/turn invocation.
+std::atomic<int> motorCurrentDelay{DEFAULT_MOTOR_CURRENT_DELAY}; ///< Pause after each servo write to spread current.
 
 // ============================================================================
 // COMMAND DISPATCHER STATE

@@ -5,6 +5,8 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 // ============================================================================
 // PERIPHERAL INSTANCE
@@ -103,11 +105,21 @@ static const FaceFpsEntry faceFpsEntries[] = {
 // STATE VARIABLES
 // ============================================================================
 
-namespace Display
-{
-  String currentFaceName = "default";
-  int    faceFps          = DEFAULT_FACE_FPS;
-} // namespace Display
+// ---------------------------------------------------------------------------
+// Shared state — accessed from multiple FreeRTOS tasks (Phase 6 protection)
+// ---------------------------------------------------------------------------
+/// Mutex protecting s_currentFaceName (String — heap ops, needs proper semaphore).
+static SemaphoreHandle_t s_faceNameMutex = nullptr;
+/// Spinlock protecting s_faceFps (int — hardware-atomic, portENTER_CRITICAL ok).
+static portMUX_TYPE      s_faceMux       = portMUX_INITIALIZER_UNLOCKED;
+
+/// Symbolic name of the face currently displayed.
+/// Protected by s_faceNameMutex. Written only by Display::set().
+static String s_currentFaceName = "default";
+
+/// Global FPS fallback for faces not in the per-face override table.
+/// Protected by s_faceMux. Written by Display::setFaceFps() (from TaskWeb).
+static int s_faceFps = DEFAULT_FACE_FPS;
 
 static const unsigned char *const *currentFaceFrames = nullptr;
 static uint8_t  currentFaceFrameCount  = 0;
@@ -162,7 +174,12 @@ static int getFaceFpsForName(const String &faceName)
     if (faceName.equalsIgnoreCase(faceFpsEntries[i].name))
       return faceFpsEntries[i].fps;
   }
-  return Display::faceFps;
+  // Read global fallback under spinlock (int — < 1 µs, no FreeRTOS calls here).
+  int fps;
+  portENTER_CRITICAL(&s_faceMux);
+  fps = s_faceFps;
+  portEXIT_CRITICAL(&s_faceMux);
+  return fps;
 }
 
 static void scheduleNextIdleBlink(unsigned long minMs, unsigned long maxMs)
@@ -179,6 +196,11 @@ bool Display::init()
   lastInputTime      = millis();
   firstInputReceived = false;
   showingWifiInfo    = false;
+
+  // Create synchronisation primitives used by the accessor functions.
+  // xSemaphoreCreateMutex() is safe to call here: the FreeRTOS scheduler is
+  // already running when setup() executes on Arduino-ESP32.
+  s_faceNameMutex = xSemaphoreCreateMutex();
 
   bool ok = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
   if (!ok)
@@ -213,13 +235,17 @@ void Display::bootMsg(const char *msg, bool clear)
 
 void Display::set(const String &faceName)
 {
-  if (faceName == Display::currentFaceName && currentFaceFrames != nullptr)
-    return;
+  // --- Idempotency check (read s_currentFaceName under mutex) ---
+  {
+    xSemaphoreTake(s_faceNameMutex, portMAX_DELAY);
+    bool same = (faceName == s_currentFaceName) && (currentFaceFrames != nullptr);
+    xSemaphoreGive(s_faceNameMutex);
+    if (same) return;
+  }
 
   Serial.print(F("[DEBUG] Display::set: switching face -> "));
   Serial.println(faceName);
 
-  Display::currentFaceName = faceName;
   currentFaceFrameIndex    = 0;
   lastFaceFrameMs          = 0;
   faceFrameDirection       = 1;
@@ -229,6 +255,8 @@ void Display::set(const String &faceName)
   // Default fallback.
   currentFaceFrames     = face_defualt_frames;
   currentFaceFrameCount = countFrames(face_defualt_frames, MAX_FACE_FRAMES);
+
+  String resolvedName = faceName;
 
   for (size_t i = 0; i < (sizeof(faceEntries) / sizeof(faceEntries[0])); i++)
   {
@@ -244,8 +272,15 @@ void Display::set(const String &faceName)
   {
     currentFaceFrames     = face_defualt_frames;
     currentFaceFrameCount = countFrames(face_defualt_frames, MAX_FACE_FRAMES);
-    Display::currentFaceName = "default";
-    currentFaceFps           = getFaceFpsForName("default");
+    resolvedName          = "default";
+    currentFaceFps        = getFaceFpsForName("default");
+  }
+
+  // --- Write resolved name under mutex (brief: just a String copy) ---
+  {
+    xSemaphoreTake(s_faceNameMutex, portMAX_DELAY);
+    s_currentFaceName = resolvedName;
+    xSemaphoreGive(s_faceNameMutex);
   }
 
   if (currentFaceFrameCount > 0 && currentFaceFrames[0] != nullptr)
@@ -273,7 +308,11 @@ void Display::tickFace()
     return;
 
   unsigned long now      = millis();
-  int fps                = max(1, (currentFaceFps > 0 ? currentFaceFps : faceFps));
+  int fallbackFps;
+  portENTER_CRITICAL(&s_faceMux);
+  fallbackFps = s_faceFps;
+  portEXIT_CRITICAL(&s_faceMux);
+  int fps                = max(1, (currentFaceFps > 0 ? currentFaceFps : fallbackFps));
   unsigned long interval = 1000UL / fps;
 
   if (now - lastFaceFrameMs >= interval)
@@ -327,6 +366,36 @@ void Display::tickFace()
     }
     updateFaceBitmap(currentFaceFrames[currentFaceFrameIndex]);
   }
+}
+
+// ============================================================================
+// THREAD-SAFE ACCESSORS (Phase 6)
+// ============================================================================
+
+String Display::getCurrentFaceName()
+{
+  if (!s_faceNameMutex)
+    return s_currentFaceName; // pre-init safety (setup() hasn't run yet)
+  xSemaphoreTake(s_faceNameMutex, portMAX_DELAY);
+  String copy = s_currentFaceName;
+  xSemaphoreGive(s_faceNameMutex);
+  return copy;
+}
+
+int Display::getFaceFps()
+{
+  int v;
+  portENTER_CRITICAL(&s_faceMux);
+  v = s_faceFps;
+  portEXIT_CRITICAL(&s_faceMux);
+  return v;
+}
+
+void Display::setFaceFps(int fps)
+{
+  portENTER_CRITICAL(&s_faceMux);
+  s_faceFps = (fps > 0 ? fps : 1);
+  portEXIT_CRITICAL(&s_faceMux);
 }
 
 void Display::enterIdle()

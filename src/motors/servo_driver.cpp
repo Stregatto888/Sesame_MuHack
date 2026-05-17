@@ -2,9 +2,10 @@
 #include "core/tasks.h"
 
 #include <ESP32Servo.h>
+#include <atomic>
 
-// motorCurrentDelay remains a global in main.cpp (Phase 6 will protect it).
-extern int motorCurrentDelay;
+// motorCurrentDelay remains a global in main.cpp (Phase 6: std::atomic<int>).
+extern std::atomic<int> motorCurrentDelay;
 
 // ============================================================================
 // SERVO LABELS

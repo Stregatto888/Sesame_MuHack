@@ -2,6 +2,7 @@
 #include "motors/servo_driver.h"
 #include "display/face_engine.h"
 #include "core/tasks.h"
+#include <atomic>
 
 // ============================================================================
 // PHASE-1/2 DEPENDENCIES (still defined in main.cpp)
@@ -9,8 +10,8 @@
 // thread-safe accessors are added in Phase 6.
 // ============================================================================
 
-extern int    frameDelay;
-extern int    walkCycles;
+extern std::atomic<int> frameDelay;
+extern std::atomic<int> walkCycles;
 extern String currentCommand;
 
 // Convenience alias so pose bodies read naturally.

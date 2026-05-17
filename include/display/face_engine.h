@@ -28,13 +28,28 @@ enum FaceAnimMode : uint8_t
 
 namespace Display
 {
-  /// Symbolic name of the face currently shown on the OLED.
-  /// Read-only from outside the module; written only by Display::set().
-  extern String currentFaceName;
+  /**
+   * @brief Return the symbolic name of the face currently shown on the OLED.
+   *
+   * Thread-safe: protected by a FreeRTOS mutex inside face_engine.cpp.
+   * Always returns a copy — callers do not hold any lock.
+   */
+  String getCurrentFaceName();
 
-  /// Global FPS fallback for faces not listed in the per-face override table.
-  /// Writable from outside to allow runtime tuning via /setSettings.
-  extern int faceFps;
+  /**
+   * @brief Return the global FPS fallback for faces not in the per-face table.
+   *
+   * Thread-safe: read under portENTER_CRITICAL.
+   */
+  int getFaceFps();
+
+  /**
+   * @brief Update the global FPS fallback at runtime (e.g. from /setSettings).
+   *
+   * Thread-safe: write under portENTER_CRITICAL.
+   * @param fps New frame-per-second value (clamped to >= 1).
+   */
+  void setFaceFps(int fps);
 
   /**
    * @brief Initialise the SSD1306 hardware (clear, set text defaults).

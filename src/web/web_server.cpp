@@ -23,14 +23,15 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <atomic>
 
 // ---------------------------------------------------------------------------
 // Shared state defined in main.cpp
 // ---------------------------------------------------------------------------
-extern String currentCommand; ///< Read-only here: shows the active dispatched command.
-extern int    frameDelay;
-extern int    walkCycles;
-extern int    motorCurrentDelay;
+extern String              currentCommand; ///< Read-only here: shows the active dispatched command.
+extern std::atomic<int>    frameDelay;
+extern std::atomic<int>    walkCycles;
+extern std::atomic<int>    motorCurrentDelay;
 
 // ---------------------------------------------------------------------------
 // Web namespace state
@@ -145,7 +146,7 @@ static void handleTerminalCmd()
     resp += "\\nSSID: " + String(AP_SSID);
     resp += "\\nClients: " + String(WiFi.softAPgetStationNum());
     resp += "\\nCommand: " + (currentCommand.length() > 0 ? currentCommand : String("idle"));
-    resp += "\\nFace: " + Display::currentFaceName;
+    resp += "\nFace: " + Display::getCurrentFaceName();
     resp += "\\nHack Lock: " + String(hackLocked ? "ACTIVE" : "off");
     if (hackLocked)
       resp += "\\nOwner: " + hackOwnerIP.toString();
@@ -276,10 +277,10 @@ static void handleCommandWeb()
 static void handleGetSettings()
 {
   String json = "{";
-  json += "\"frameDelay\":"        + String(frameDelay)        + ",";
-  json += "\"walkCycles\":"        + String(walkCycles)        + ",";
-  json += "\"motorCurrentDelay\":" + String(motorCurrentDelay) + ",";
-  json += "\"faceFps\":"           + String(Display::faceFps);
+  json += "\"frameDelay\":"        + String((int)frameDelay)        + ",";
+  json += "\"walkCycles\":"        + String((int)walkCycles)        + ",";
+  json += "\"motorCurrentDelay\":" + String((int)motorCurrentDelay) + ",";
+  json += "\"faceFps\":"           + String(Display::getFaceFps());
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -296,7 +297,7 @@ static void handleSetSettings()
   if (server.hasArg("motorCurrentDelay"))
     motorCurrentDelay = server.arg("motorCurrentDelay").toInt();
   if (server.hasArg("faceFps"))
-    Display::faceFps = (int)max(1L, server.arg("faceFps").toInt());
+    Display::setFaceFps((int)max(1L, server.arg("faceFps").toInt()));
   server.send(200, "text/plain", "OK");
 }
 
@@ -307,7 +308,7 @@ static void handleGetStatus()
 {
   String json = "{";
   json += "\"currentCommand\":\"" + currentCommand + "\",";
-  json += "\"currentFace\":\""    + Display::currentFaceName + "\",";
+  json += "\"currentFace\":\""    + Display::getCurrentFaceName() + "\",";
   json += "\"networkConnected\":" + String(Web::networkConnected ? "true" : "false") + ",";
   json += "\"apIP\":\""           + WiFi.softAPIP().toString() + "\"";
   if (Web::networkConnected)
