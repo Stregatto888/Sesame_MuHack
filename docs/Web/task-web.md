@@ -60,6 +60,6 @@ flowchart TD
 
 ## Related diagrams
 
-- [System overview](architecture-overview.md)
-- [TaskDisplay detail](task-display.md)
-- [TaskMotor detail](task-motor.md)
+- [System overview](../Architecture/architecture-overview.md)
+- [TaskDisplay detail](../Display/task-display.md)
+- [TaskMotor detail](../Motor/task-motor.md)

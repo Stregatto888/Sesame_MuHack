@@ -167,10 +167,10 @@ curl -X POST http://192.168.4.1/api/command \
 
 | Diagram                                          | Description                                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| [System Overview](docs/architecture-overview.md) | All 3 FreeRTOS tasks, CmdQueue, hardware, shared state, thread-safety contracts |
-| [TaskWeb](docs/task-web.md)                      | HTTP routes, hack-lock state machine, terminal dispatch                         |
-| [TaskDisplay](docs/task-display.md)              | Face animation modes, idle-blink automaton, WiFi marquee                        |
-| [TaskMotor](docs/task-motor.md)                  | Command dispatcher, gait loop, pressingCheck, Serial CLI parser                 |
+| [System Overview](docs/Architecture/architecture-overview.md) | All 3 FreeRTOS tasks, CmdQueue, hardware, shared state, thread-safety contracts |
+| [TaskWeb](docs/Web/task-web.md)                               | HTTP routes, hack-lock state machine, terminal dispatch                         |
+| [TaskDisplay](docs/Display/task-display.md)                   | Face animation modes, idle-blink automaton, WiFi marquee                        |
+| [TaskMotor](docs/Motor/task-motor.md)                         | Command dispatcher, gait loop, pressingCheck, Serial CLI parser                 |
 
 ---
 

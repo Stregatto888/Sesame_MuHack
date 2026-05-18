@@ -84,6 +84,6 @@ flowchart TD
 
 ## Related diagrams
 
-- [System overview](architecture-overview.md)
-- [TaskWeb detail](task-web.md)
-- [TaskMotor detail](task-motor.md)
+- [System overview](../Architecture/architecture-overview.md)
+- [TaskWeb detail](../Web/task-web.md)
+- [TaskMotor detail](../Motor/task-motor.md)

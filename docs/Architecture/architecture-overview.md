@@ -86,6 +86,6 @@ graph TB
 
 ## Related diagrams
 
-- [TaskWeb detail](task-web.md)
-- [TaskDisplay detail](task-display.md)
-- [TaskMotor detail](task-motor.md)
+- [TaskWeb detail](../Web/task-web.md)
+- [TaskDisplay detail](../Display/task-display.md)
+- [TaskMotor detail](../Motor/task-motor.md)
