@@ -175,12 +175,12 @@ Technical diagrams (code-level detail):
 
 Plain-English diagrams (simplified, no jargon):
 
-| Diagram                                                              | Description                                       |
-| -------------------------------------------------------------------- | ------------------------------------------------- |
-| [System Overview](docs/Architecture/architecture4stupid.md)          | How the three brains, hardware and clients connect |
-| [TaskWeb — How It Works](docs/Web/web4stupid.md)                     | HTTP routes, hack-lock state machine               |
-| [TaskDisplay — How It Works](docs/Display/display4stupid.md)         | Face animation, idle blink, WiFi marquee           |
-| [TaskMotor — How It Works](docs/Motor/motor4stupid.md)               | Command dispatcher, gait loop, Serial CLI          |
+| Diagram                                                      | Description                                        |
+| ------------------------------------------------------------ | -------------------------------------------------- |
+| [System Overview](docs/Architecture/architecture4stupid.md)  | How the three brains, hardware and clients connect |
+| [TaskWeb — How It Works](docs/Web/web4stupid.md)             | HTTP routes, hack-lock state machine               |
+| [TaskDisplay — How It Works](docs/Display/display4stupid.md) | Face animation, idle blink, WiFi marquee           |
+| [TaskMotor — How It Works](docs/Motor/motor4stupid.md)       | Command dispatcher, gait loop, Serial CLI          |
 
 ---
 
