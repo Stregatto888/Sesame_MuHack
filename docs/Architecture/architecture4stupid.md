@@ -1,72 +1,72 @@
-# Architettura — Panoramica del Sistema
+# Architecture — How It Works
 
-Tutti e tre i task FreeRTOS, la coda dei comandi, i dispositivi fisici, le interfacce utente e i dati condivisi con protezione thread.
+All three FreeRTOS tasks, the command queue, the physical hardware, the user interfaces, and the shared data with thread protection.
 
 ```mermaid
 graph TB
-subgraph HW["HARDWARE FISICO"]
-OLED["Schermo OLED\n(Il volto del robot)"]
-SERVOS["8 Servomotori\n(Le gambe del robot)"]
-WIFI["Modulo WiFi\n(Crea la rete del robot)"]
+subgraph HW["PHYSICAL HARDWARE"]
+OLED["OLED Screen\n(The robot's face)"]
+SERVOS["8 Servo Motors\n(The robot's legs)"]
+WIFI["WiFi Module\n(Creates the robot's network)"]
 end
 
-    subgraph CLIENTS["INTERFACCE UTENTE"]
-        BROWSER["Smartphone / PC\n(App Web)"]
-        CURL["Script / API\n(Integrazioni esterne)"]
-        SERIAL["Terminale Seriale\n(Cavo USB)"]
+    subgraph CLIENTS["USER INTERFACES"]
+        BROWSER["Smartphone / PC\n(Web App)"]
+        CURL["Script / API\n(External integrations)"]
+        SERIAL["Serial Terminal\n(USB cable)"]
     end
 
-    subgraph RTOS["SISTEMA MULTITASKING (FreeRTOS)"]
+    subgraph RTOS["MULTITASKING SYSTEM (FreeRTOS)"]
         direction TB
 
-        subgraph TW["1. Cervello di Rete (TaskWeb)"]
-            DNS["Trappola DNS\n(Forza l'apertura dell'App Web)"]
-            HTTP["Server Web\n(Gestisce le richieste utente)"]
-            LOCK["Gestore Sicurezza\n(Blocca/Sblocca il controllo)"]
+        subgraph TW["1. Network Brain (TaskWeb)"]
+            DNS["DNS Trap\n(Forces the Web App to open)"]
+            HTTP["Web Server\n(Handles user requests)"]
+            LOCK["Security Manager\n(Locks / Unlocks control)"]
         end
 
-        subgraph TD["2. Cervello Visivo (TaskDisplay)"]
-            TICK["Animatore Volto\n(Scorre i frame)"]
-            IDLE["Gestore Inattività\n(Sbatte le palpebre)"]
-            MARQ["Gestore Banner\n(Mostra info WiFi se inattivo)"]
+        subgraph TD["2. Visual Brain (TaskDisplay)"]
+            TICK["Face Animator\n(Advances frames)"]
+            IDLE["Idle Manager\n(Blinks the eyes)"]
+            MARQ["Banner Manager\n(Shows WiFi info when idle)"]
         end
 
-        CQ["Coda dei Comandi\n(Disaccoppia la Rete dai Motori)"]
+        CQ["Command Queue\n(Decouples Network from Motors)"]
 
-        subgraph TM["3. Cervello Motorio (TaskMotor)"]
-            DISP["Smistatore Comandi\n(Decide cosa fare)"]
-            POSES["Libreria Movimenti\n(Pose e Camminate)"]
-            CLI["Terminale Diagnostico\n(Ascolta il cavo USB)"]
+        subgraph TM["3. Motor Brain (TaskMotor)"]
+            DISP["Command Dispatcher\n(Decides what to do)"]
+            POSES["Movement Library\n(Poses and Gaits)"]
+            CLI["Diagnostic Terminal\n(Listens on USB cable)"]
         end
     end
 
-    subgraph SHARED["DATI CONDIVISI (Sicuri per accesso multiplo)"]
-        FN["Nome Faccia Attuale\n(Protetto da lettura/scrittura a metà)"]
-        FFPS["Velocità Animazione\n(Protetta da modifiche simultanee)"]
-        ATOM["Parametri di Movimento\n(Velocità, Cicli, Ritardi)"]
+    subgraph SHARED["SHARED DATA (Safe for concurrent access)"]
+        FN["Current Face Name\n(Protected against mid-write reads)"]
+        FFPS["Animation Speed\n(Protected against simultaneous writes)"]
+        ATOM["Motion Parameters\n(Speed, Cycles, Delays)"]
     end
 
-    BROWSER -->|Richieste Web| HTTP
-    CURL -->|Richieste Web| HTTP
-    SERIAL -->|Testo| CLI
+    BROWSER -->|Web requests| HTTP
+    CURL -->|Web requests| HTTP
+    SERIAL -->|Text| CLI
 
-    DNS -->|Reindirizza| WIFI
-    HTTP -->|Invia Comando| CQ
-    CQ -->|Legge Comando| DISP
+    DNS -->|Redirects to| WIFI
+    HTTP -->|Sends command| CQ
+    CQ -->|Reads command| DISP
     DISP --> POSES
-    POSES -->|Muove Fisicamente| SERVOS
-    POSES -->|Cambia Espressione| FN
+    POSES -->|Physically moves| SERVOS
+    POSES -->|Changes expression| FN
 
-    HTTP -->|Legge per mostrare stato| FN
-    HTTP -->|Legge/Modifica| FFPS
-    HTTP -->|Legge/Modifica| ATOM
-    TM -->|Legge per muoversi| ATOM
+    HTTP -->|Reads for status display| FN
+    HTTP -->|Reads / writes| FFPS
+    HTTP -->|Reads / writes| ATOM
+    TM -->|Reads to move| ATOM
 
-    TICK -->|Disegna pixel| OLED
-    TICK -->|Legge espressione| FN
-    TICK -->|Legge velocità| FFPS
-    IDLE -->|Forza battito ciglia| OLED
-    MARQ -->|Scorre testo| OLED
+    TICK -->|Draws pixels| OLED
+    TICK -->|Reads expression| FN
+    TICK -->|Reads speed| FFPS
+    IDLE -->|Forces eye blink| OLED
+    MARQ -->|Scrolls text| OLED
 
     style TW fill:#1a1a2e,color:#00d4ff
     style TD fill:#1a1a2e,color:#00d4ff
@@ -75,20 +75,20 @@ end
     style SHARED fill:#0d1117,color:#3fb950
 ```
 
-## Sicurezza degli accessi condivisi
+## Shared data safety
 
-Tre task diversi girano in parallelo e leggono/scrivono gli stessi dati.
-Per non corrompere le informazioni, ogni variabile condivisa è protetta da un meccanismo diverso:
+Three tasks run in parallel and read/write the same data.
+To avoid corruption, each shared variable is protected by a different mechanism:
 
-| Variabile condivisa | Chi scrive | Chi legge | Protezione usata |
+| Shared variable | Who writes | Who reads | Protection used |
 | --- | --- | --- | --- |
-| Nome faccia attuale (`String`) | TaskMotor (`Display::set`) | TaskWeb (stato/terminale) | Mutex (`SemaphoreHandle_t`) |
-| Velocità animazione (`int`) | TaskWeb (`setSettings`) | TaskDisplay (`tickFace`) | Spinlock (`portMUX_TYPE`) |
-| `frameDelay`, `walkCycles`, `motorCurrentDelay` (`int`) | TaskWeb (`setSettings`) | TaskMotor (pose, servo) | Variabile atomica (`std::atomic<int>`) |
-| Coda comandi (`CmdQueue`) | TaskWeb (handler HTTP) | TaskMotor (dispatcher) | Coda FreeRTOS (sicura da interrupt) |
+| Current face name (`String`) | TaskMotor (`Display::set`) | TaskWeb (status/terminal) | Mutex (`SemaphoreHandle_t`) |
+| Animation speed (`int`) | TaskWeb (`setSettings`) | TaskDisplay (`tickFace`) | Spinlock (`portMUX_TYPE`) |
+| `frameDelay`, `walkCycles`, `motorCurrentDelay` (`int`) | TaskWeb (`setSettings`) | TaskMotor (poses, servo) | Atomic variable (`std::atomic<int>`) |
+| Command queue (`CmdQueue`) | TaskWeb (HTTP handlers) | TaskMotor (dispatcher) | FreeRTOS queue (interrupt-safe) |
 
-## Diagrammi correlati
+## Related diagrams
 
-- [TaskWeb — Come Funziona](../Web/web4stupid.md)
-- [TaskDisplay — Come Funziona](../Display/display4stupid.md)
-- [TaskMotor — Come Funziona](../Motor/motor4stupid.md)
+- [TaskWeb — How It Works](../Web/web4stupid.md)
+- [TaskDisplay — How It Works](../Display/display4stupid.md)
+- [TaskMotor — How It Works](../Motor/motor4stupid.md)

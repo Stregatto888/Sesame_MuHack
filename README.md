@@ -42,7 +42,6 @@ The mechanical design, movement algorithms, and face animation system are all by
 | **Thread-safe state**    | `std::atomic<int>` + `SemaphoreHandle_t` mutex + `portMUX_TYPE` spinlock.            |
 | **Command queue**        | FreeRTOS queue decouples HTTP handlers from motor execution.                         |
 | **Browser terminal**     | Web CLI — type commands directly from the captive portal.                            |
-| **Hack lock**            | `hack` locks the robot to your IP. `muhack` releases it.                             |
 | **Huge app partition**   | Dropped dual-OTA scheme. Flash usage: 71.6% → **29.8%**.                             |
 
 ---
@@ -165,12 +164,23 @@ curl -X POST http://192.168.4.1/api/command \
 
 ## ARCHITECTURE
 
-| Diagram                                          | Description                                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------- |
+Technical diagrams (code-level detail):
+
+| Diagram                                                       | Description                                                                     |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | [System Overview](docs/Architecture/architecture-overview.md) | All 3 FreeRTOS tasks, CmdQueue, hardware, shared state, thread-safety contracts |
 | [TaskWeb](docs/Web/task-web.md)                               | HTTP routes, hack-lock state machine, terminal dispatch                         |
 | [TaskDisplay](docs/Display/task-display.md)                   | Face animation modes, idle-blink automaton, WiFi marquee                        |
 | [TaskMotor](docs/Motor/task-motor.md)                         | Command dispatcher, gait loop, pressingCheck, Serial CLI parser                 |
+
+Plain-English diagrams (simplified, no jargon):
+
+| Diagram                                                              | Description                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------- |
+| [System Overview](docs/Architecture/architecture4stupid.md)          | How the three brains, hardware and clients connect |
+| [TaskWeb — How It Works](docs/Web/web4stupid.md)                     | HTTP routes, hack-lock state machine               |
+| [TaskDisplay — How It Works](docs/Display/display4stupid.md)         | Face animation, idle blink, WiFi marquee           |
+| [TaskMotor — How It Works](docs/Motor/motor4stupid.md)               | Command dispatcher, gait loop, Serial CLI          |
 
 ---
 
@@ -210,7 +220,7 @@ ESP32 Arduino Core by Espressif Systems
 
 <div align="center">
 
-**Made with ❤️ and ⚡ at [MuHack Brescia](https://muhack.org)**
+**Made with passion and energy at [MuHack Brescia](https://muhack.org)**
 
 _Issues and PRs welcome._
 

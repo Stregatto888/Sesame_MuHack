@@ -1,64 +1,64 @@
-# TaskMotor — Come Funziona
+# TaskMotor — How It Works
 
-**Priorità:** 2 (la più alta) · **Stack:** 8 KB · **Ciclo:** ogni ~1 ms
+**Priority:** 2 (the highest) · **Stack:** 8 KB · **Loop period:** every ~1 ms
 
-Il task più importante. Prende i comandi dalla coda e li esegue: camminate, pose, e movimenti diretti via cavo USB. La priorità più alta garantisce che i motori rispondano subito.
+The most important task. Picks commands from the queue and executes them: walks, poses, and direct movements via USB cable. The highest priority ensures motors respond immediately.
 
 ```mermaid
 flowchart TD
-    START([Inizio Ciclo Motori]) --> POP["Controlla la Casella\ndei Comandi Ricevuti"]
-    POP -->|C'è un nuovo comando| SET_CMD["Memorizzalo come\n'Comando Attuale'"]
-    POP -->|Casella vuota| DISPATCH
+    START([Motor Loop Start]) --> POP["Check the\nIncoming Command Box"]
+    POP -->|New command arrived| SET_CMD["Store it as\n'Current Command'"]
+    POP -->|Box empty| DISPATCH
 
-    SET_CMD --> DISPATCH{"C'è un Comando Attuale\nda eseguire?"}
+    SET_CMD --> DISPATCH{"Is there a Current Command\nto execute?"}
 
-    DISPATCH -->|No, sono fermo| SERIAL_CHK
-    DISPATCH -->|Sì| CMD_SW{Qual è il comando?}
+    DISPATCH -->|No, I'm idle| SERIAL_CHK
+    DISPATCH -->|Yes| CMD_SW{What is the command?}
 
-    CMD_SW -->|Avanti| WALK["Camminata\n(Ripeti ciclo passi, fermati\nse arriva altro comando)"]
-    CMD_SW -->|Indietro| WALKB["Camminata all'indietro"]
-    CMD_SW -->|Sinistra| TURNL["Rotazione a Sinistra"]
-    CMD_SW -->|Destra| TURNR["Rotazione a Destra"]
-    CMD_SW -->|Riposo| REST["Mettiti a terra\nRilassa i motori\nCancella comando attuale"]
-    CMD_SW -->|In piedi| STAND["Alzati\nAttiva animazione inattiva\nCancella comando attuale"]
-    CMD_SW -->|Saluta, Balla, Ecc.| POSE["Esegui Posa Specifica\nCambia espressione\nCancella comando attuale"]
+    CMD_SW -->|Forward| WALK["Walk\n(Repeat step cycle, stop\nif a new command arrives)"]
+    CMD_SW -->|Backward| WALKB["Walk backward"]
+    CMD_SW -->|Left| TURNL["Turn left"]
+    CMD_SW -->|Right| TURNR["Turn right"]
+    CMD_SW -->|Rest| REST["Lie down\nRelax motors\nClear current command"]
+    CMD_SW -->|Stand| STAND["Stand up\nActivate idle animation\nClear current command"]
+    CMD_SW -->|Wave, Dance, etc.| POSE["Execute specific pose\nChange expression\nClear current command"]
 
-    WALK --> PRESS_CHK["Controllo Rapido:\nÈ arrivato un nuovo comando\nmentre camminavo?"]
+    WALK --> PRESS_CHK["Quick check:\nDid a new command arrive\nwhile I was walking?"]
     WALKB --> PRESS_CHK
     TURNL --> PRESS_CHK
     TURNR --> PRESS_CHK
-    PRESS_CHK -->|Sì, nuovo comando| SET_CMD
-    PRESS_CHK -->|No, continua| DISPATCH
+    PRESS_CHK -->|Yes, new command| SET_CMD
+    PRESS_CHK -->|No, keep going| DISPATCH
 
-    POSE --> SERVOS["Applica angoli ai motori\n(Aggiungi calibrazione)\nAttendi prima del prossimo step"]
+    POSE --> SERVOS["Apply angles to motors\n(Add calibration offset)\nWait before next step"]
     SERVOS --> DISPATCH
 
     REST --> DISPATCH
     STAND --> DISPATCH
 
-    DISPATCH --> SERIAL_CHK{"C'è un tecnico collegato\nvia cavo USB?"}
+    DISPATCH --> SERIAL_CHK{"Is a technician connected\nvia USB cable?"}
     SERIAL_CHK -->|No| DELAY
-    SERIAL_CHK -->|Sì| READ_CHAR["Leggi cosa sta scrivendo\nil tecnico sul terminale"]
-    READ_CHAR --> NEWLINE{"Ha premuto Invio?"}
+    SERIAL_CHK -->|Yes| READ_CHAR["Read what the technician\nis typing in the terminal"]
+    READ_CHAR --> NEWLINE{"Did they press Enter?"}
     NEWLINE -->|No| SERIAL_CHK
-    NEWLINE -->|Sì| CLI_PARSE{Analizza il comando USB}
+    NEWLINE -->|Yes| CLI_PARSE{Parse the USB command}
 
-    CLI_PARSE -->|Comando camminata| MOV_CMD["Forza comando camminata"]
-    CLI_PARSE -->|Comando posa| POSE_CMD["Esegui Posa"]
-    CLI_PARSE -->|Calibra 1 motore| ONE_SERVO["Muovi un singolo motore"]
-    CLI_PARSE -->|Calibra tutti| ALL_SERVO["Muovi tutti i motori"]
-    CLI_PARSE -->|Imposta correzione| SUBTRIM["Salva offset calibrazione"]
-    CLI_PARSE -->|Salva calibrazione| ST_SAVE["Mostra codice da incollare"]
-    CLI_PARSE -->|Azzera calibrazione| ST_RESET["Azzera offset"]
+    CLI_PARSE -->|Walk command| MOV_CMD["Force walk command"]
+    CLI_PARSE -->|Pose command| POSE_CMD["Execute pose"]
+    CLI_PARSE -->|Calibrate 1 motor| ONE_SERVO["Move a single motor"]
+    CLI_PARSE -->|Calibrate all| ALL_SERVO["Move all motors"]
+    CLI_PARSE -->|Set correction| SUBTRIM["Save calibration offset"]
+    CLI_PARSE -->|Save calibration| ST_SAVE["Print code to paste into source"]
+    CLI_PARSE -->|Reset calibration| ST_RESET["Zero all offsets"]
 
-    MOV_CMD --> CLEAR["Pulisci terminale USB"]
+    MOV_CMD --> CLEAR["Clear USB buffer"]
     POSE_CMD --> CLEAR
     ONE_SERVO --> CLEAR
     ALL_SERVO --> CLEAR
     SUBTRIM --> CLEAR
     ST_SAVE --> CLEAR
     ST_RESET --> CLEAR
-    CLEAR --> DELAY["Riposo brevissimo (1ms)\nper non bloccare la CPU"]
+    CLEAR --> DELAY["Very short rest (1ms)\nto avoid blocking the CPU"]
     DELAY --> START
 
     style WALK fill:#e63946,color:#fff
@@ -70,33 +70,33 @@ flowchart TD
     style SERVOS fill:#1a1a2e,color:#3fb950
 ```
 
-## Interruzione durante la camminata
+## Interrupting a walk
 
-Le camminate (avanti/indietro/sinistra/destra) si possono interrompere in qualsiasi momento. Ogni 5 ms durante il ciclo di passo, `pressingCheck()` controlla se è arrivato un nuovo comando. Se sì:
+Walk commands (forward/backward/left/right) can be interrupted at any time. Every 5 ms during the step cycle, `pressingCheck()` checks if a new command has arrived. If so:
 
-1. Il nuovo comando diventa quello attuale
-2. Il robot torna in posizione sicura (`runStandPose`)
-3. La camminata si interrompe subito
+1. The new command becomes the current one
+2. The robot returns to a safe position (`runStandPose`)
+3. The walk loop stops immediately
 
-## Come viene mosso un servo
+## How a servo is moved
 
 ```
-angolo_richiesto
-  + servoSubtrim[canale]          ← offset di calibrazione int8_t [-90, +90]
-  = constrain(risultato, 0, 180)
-  → servos[canale].write()
-  → vTaskDelay(motorCurrentDelay) ← ritardo per distribuire il picco di corrente
+requested_angle
+  + servoSubtrim[channel]         ← calibration offset int8_t [-90, +90]
+  = constrain(result, 0, 180)
+  → servos[channel].write()
+  → vTaskDelay(motorCurrentDelay) ← delay to spread inrush current
 ```
 
-## Comandi continui vs. pose singole
+## Continuous vs. one-shot commands
 
-| Tipo | Comandi | Comportamento |
+| Type | Commands | Behaviour |
 | --- | --- | --- |
-| **Continui** | avanti, indietro, sinistra, destra | Il comando rimane attivo e si riavvia ogni ciclo finché non viene interrotto |
-| **Pose singole** | rest, stand, wave, dance, ecc. | La funzione cancella il comando attuale quando ha finito |
+| **Continuous** | forward, backward, left, right | Command stays active and re-dispatches every loop until interrupted |
+| **One-shot** | rest, stand, wave, dance, etc. | Function clears the current command on completion |
 
-## Diagrammi correlati
+## Related diagrams
 
-- [Panoramica Sistema](../Architecture/architecture4stupid.md)
-- [TaskWeb — Come Funziona](../Web/web4stupid.md)
-- [TaskDisplay — Come Funziona](../Display/display4stupid.md)
+- [System Overview](../Architecture/architecture4stupid.md)
+- [TaskWeb — How It Works](../Web/web4stupid.md)
+- [TaskDisplay — How It Works](../Display/display4stupid.md)

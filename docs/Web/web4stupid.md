@@ -1,43 +1,43 @@
-# TaskWeb — Come Funziona
+# TaskWeb — How It Works
 
-**Priorità:** 1 · **Stack:** 8 KB · **Ciclo:** ogni ~1 ms
+**Priority:** 1 · **Stack:** 8 KB · **Loop period:** every ~1 ms
 
-Gestisce il server DNS del portale captive e il server HTTP. Tutte le 8 rotte passano da qui. Il meccanismo di blocco "hack-lock" vive interamente in questo task.
+Manages the captive portal DNS server and the HTTP server. All 8 routes are handled here. The hack-lock mechanism lives entirely inside this task.
 
 ```mermaid
 flowchart TD
-    START([Inizio Ciclo Web]) --> PUMP["Ascolta Rete\n(Attende connessioni)"]
+    START([Web Loop Start]) --> PUMP["Listen on Network\n(Wait for connections)"]
 
-    PUMP --> DNS_PROC["Gestisci richieste DNS\n(Ignora se non ce ne sono)"]
-    DNS_PROC --> HTTP_PROC["Gestisci richieste HTTP\n(Prende in carico un utente)"]
-    HTTP_PROC --> ROUTE{Cosa vuole\nl'utente?}
+    PUMP --> DNS_PROC["Handle DNS requests\n(Ignore if none)"]
+    DNS_PROC --> HTTP_PROC["Handle HTTP requests\n(Take one user request)"]
+    HTTP_PROC --> ROUTE{What does\nthe user want?}
 
-    ROUTE -->|Apre il sito| ROOT["Invia la pagina Web\n(Interfaccia grafica)"]
-    ROUTE -->|Pulsante movimento| CMD["Comando Semplice\n(Es. Cammina, Fermati)"]
-    ROUTE -->|Terminale Web| TERM["Comando Avanzato\n(Testo dal terminale web)"]
-    ROUTE -->|Integrazione esterna| APICMD["Comando API\n(Dati strutturati JSON)"]
-    ROUTE -->|Richiesta stato| STATUS["Invia Stato Attuale\n(Cosa sto facendo? IP?)"]
-    ROUTE -->|Richiesta parametri| GETS["Invia Impostazioni\n(Velocità attuali)"]
-    ROUTE -->|Salvataggio parametri| SETS["Aggiorna Impostazioni\n(Applica nuove velocità)"]
-    ROUTE -->|Pagina inesistente| ROOT
+    ROUTE -->|Opens the site| ROOT["Send the Web Page\n(Graphical interface)"]
+    ROUTE -->|Movement button| CMD["Simple Command\n(e.g. Walk, Stop)"]
+    ROUTE -->|Web terminal| TERM["Advanced Command\n(Text from web terminal)"]
+    ROUTE -->|External integration| APICMD["API Command\n(Structured JSON data)"]
+    ROUTE -->|Status request| STATUS["Send Current Status\n(What am I doing? IP?)"]
+    ROUTE -->|Parameter request| GETS["Send Settings\n(Current speeds)"]
+    ROUTE -->|Save parameters| SETS["Update Settings\n(Apply new speeds)"]
+    ROUTE -->|Page not found| ROOT
 
-    TERM --> HACK_CHECK{Che comando è?}
-    HACK_CHECK -->|Voglio il controllo| LOCK["Blocca il robot\nAssocia al tuo IP\n→ Successo"]
-    HACK_CHECK -->|Rilascia il controllo| UNLOCK{"Sei il proprietario?"}
-    UNLOCK -->|Sì| FREE["Sblocca il robot per tutti\n→ Successo"]
-    UNLOCK -->|No| DENY2["→ Errore: Non hai i permessi"]
-    HACK_CHECK -->|Info di sistema| STAT_RESP["Rispondi con Info\n(IP, Connessioni, Stato Lock)"]
-    HACK_CHECK -->|Voglio muoverti| BLOCKED{"Il robot è bloccato\nda un altro utente?"}
-    BLOCKED -->|Sì| DENY["→ Errore: Accesso Negato"]
-    BLOCKED -->|No| ENQUEUE["Accetta il comando\nSveglia lo schermo\nPassa la palla ai Motori"]
+    TERM --> HACK_CHECK{What command is it?}
+    HACK_CHECK -->|Take control| LOCK["Lock the robot\nBind to your IP\n→ Success"]
+    HACK_CHECK -->|Release control| UNLOCK{"Are you the owner?"}
+    UNLOCK -->|Yes| FREE["Unlock robot for everyone\n→ Success"]
+    UNLOCK -->|No| DENY2["→ Error: No permission"]
+    HACK_CHECK -->|System info| STAT_RESP["Reply with Info\n(IP, Connections, Lock State)"]
+    HACK_CHECK -->|Move the robot| BLOCKED{"Is the robot locked\nby another user?"}
+    BLOCKED -->|Yes| DENY["→ Error: Access Denied"]
+    BLOCKED -->|No| ENQUEUE["Accept the command\nWake the screen\nPass it to the Motors"]
 
-    APICMD --> PARSE["Analizza il testo JSON"]
-    PARSE -->|Solo espressione| FACE_SET["Cambia faccia\nSveglia lo schermo"]
-    PARSE -->|Espressione + Movimento| CMD_PUSH["Accetta il comando\nOpzionale: Cambia faccia"]
+    APICMD --> PARSE["Parse JSON text"]
+    PARSE -->|Expression only| FACE_SET["Change face\nWake the screen"]
+    PARSE -->|Expression + Movement| CMD_PUSH["Accept the command\nOptionally change face"]
 
-    SETS --> WRITE["Salva nuovi parametri in memoria\n(Usa variabili protette)"]
+    SETS --> WRITE["Save new parameters to memory\n(Using protected variables)"]
 
-    ENQUEUE --> DELAY["Riposo brevissimo (1ms)\nper non bloccare la CPU"]
+    ENQUEUE --> DELAY["Very short rest (1ms)\nto avoid blocking the CPU"]
     ROOT --> DELAY
     DELAY --> START
 
@@ -49,20 +49,20 @@ flowchart TD
     style CMD_PUSH fill:#2a2a3e,color:#ffd700
 ```
 
-## Macchina a stati del blocco (hack-lock)
+## Hack-lock state machine
 
-Chiunque si connette alla rete WiFi del robot può controllarlo.
-Il comando `hack` permette a un singolo utente di "prendersi" il controllo esclusivo:
+Anyone connected to the robot's WiFi network can control it.
+The `hack` command lets a single user take exclusive control:
 
-| Stato | Come si attiva | Effetto |
+| State | Trigger | Effect |
 | --- | --- | --- |
-| **Sbloccato** | — (stato di partenza) | Qualsiasi client può inviare comandi |
-| **Bloccato** | `hack` da qualsiasi client | Solo l'IP che ha lanciato `hack` può comandare |
-| **Rilasciato** | `muhack` dall'IP proprietario | Torna sbloccato per tutti |
-| — | `muhack` da un IP non proprietario | `ERRORE: solo l'hacker può sbloccare` — rimane bloccato |
+| **Unlocked** | — (starting state) | Any client can send commands |
+| **Locked** | `hack` from any client | Only the IP that sent `hack` can command the robot |
+| **Released** | `muhack` from the owner IP | Back to unlocked for everyone |
+| — | `muhack` from a non-owner IP | `ERROR: only the hacker can unlock` — stays locked |
 
-## Diagrammi correlati
+## Related diagrams
 
-- [Panoramica Sistema](../Architecture/architecture4stupid.md)
-- [TaskDisplay — Come Funziona](../Display/display4stupid.md)
-- [TaskMotor — Come Funziona](../Motor/motor4stupid.md)
+- [System Overview](../Architecture/architecture4stupid.md)
+- [TaskDisplay — How It Works](../Display/display4stupid.md)
+- [TaskMotor — How It Works](../Motor/motor4stupid.md)
