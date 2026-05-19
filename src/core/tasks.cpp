@@ -287,9 +287,10 @@ static void taskMotor(void *pvParams)
             Serial.println("Subtrim values:");
             for (int i = 0; i < SERVO_COUNT; i++)
             {
-              Serial.print("Motor ");
+              Serial.print(ServoNames[i]);
+              Serial.print(" (");
               Serial.print(i);
-              Serial.print(": ");
+              Serial.print("): ");
               if (Motors::subtrim[i] >= 0)
                 Serial.print("+");
               Serial.println(Motors::subtrim[i]);
@@ -316,17 +317,28 @@ static void taskMotor(void *pvParams)
           else if (strncmp(command_buffer, "subtrim ", 8) == 0 || strncmp(command_buffer, "st ", 3) == 0)
           {
             const char *params = (command_buffer[1] == 't') ? command_buffer + 3 : command_buffer + 8;
-            int trimMotor, trimValue;
-            if (sscanf(params, "%d %d", &trimMotor, &trimValue) == 2)
+            char trimName[8];
+            int trimValue;
+            if (sscanf(params, "%7s %d", trimName, &trimValue) == 2)
             {
+              String tn(trimName);
+              tn.toUpperCase();
+              int trimMotor = servoNameToIndex(tn);
+              if (trimMotor < 0)
+              {
+                trimMotor = tn.toInt();
+                if (trimMotor == 0 && tn != "0")
+                  trimMotor = -1;
+              }
               if (trimMotor >= 0 && trimMotor < SERVO_COUNT)
               {
                 if (trimValue >= -90 && trimValue <= 90)
                 {
                   Motors::subtrim[trimMotor] = trimValue;
-                  Serial.print("Motor ");
+                  Serial.print(ServoNames[trimMotor]);
+                  Serial.print(" (");
                   Serial.print(trimMotor);
-                  Serial.print(" subtrim set to ");
+                  Serial.print(") subtrim set to ");
                   if (trimValue >= 0)
                     Serial.print("+");
                   Serial.println(trimValue);
@@ -338,7 +350,7 @@ static void taskMotor(void *pvParams)
               }
               else
               {
-                Serial.println("Invalid motor number (0-7)");
+                Serial.println("Invalid servo name or index (use R1-R4, L1-L4 or 0-7)");
               }
             }
           }
@@ -352,19 +364,33 @@ static void taskMotor(void *pvParams)
               Serial.println(angle);
             }
           }
-          else if (sscanf(command_buffer, "%d %d", &motorNum, &angle) == 2)
+          else
           {
-            if (motorNum >= 0 && motorNum < SERVO_COUNT)
+            char servoToken[8];
+            if (sscanf(command_buffer, "%7s %d", servoToken, &angle) == 2)
             {
-              Motors::setAngle(motorNum, angle);
-              Serial.print("Servo ");
-              Serial.print(motorNum);
-              Serial.print(" set to ");
-              Serial.println(angle);
-            }
-            else
-            {
-              Serial.println("Invalid motor number (0-7)");
+              String st(servoToken);
+              st.toUpperCase();
+              motorNum = servoNameToIndex(st);
+              if (motorNum < 0)
+              {
+                motorNum = st.toInt();
+                if (motorNum == 0 && st != "0")
+                  motorNum = -1;
+              }
+              if (motorNum >= 0 && motorNum < SERVO_COUNT)
+              {
+                Motors::setAngle(motorNum, angle);
+                Serial.print(ServoNames[motorNum]);
+                Serial.print(" (");
+                Serial.print(motorNum);
+                Serial.print(") set to ");
+                Serial.println(angle);
+              }
+              else
+              {
+                Serial.println("Invalid servo name or index (use R1-R4, L1-L4 or 0-7)");
+              }
             }
           }
           buffer_pos = 0;

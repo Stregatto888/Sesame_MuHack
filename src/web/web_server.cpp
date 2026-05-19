@@ -163,6 +163,9 @@ static void handleTerminalCmd()
     resp += "\\n       pushup, bow, cute, freaky, worm, shake";
     resp += "\\n       shrug, dead, crab";
     resp += "\\nSystem: status, help, hack, muhack";
+    resp += "\\nServos: R1 <angle>  (e.g. R1 90)";
+    resp += "\\n  R1=hip FR  R2=hip BR  R3=foot FR  R4=foot BR";
+    resp += "\\n  L1=hip FL  L2=hip BL  L3=foot FL  L4=foot BL";
     resp += "\\n";
     resp += "\\nhack   - Take exclusive control";
     resp += "\\nmuhack - Release control to all";
@@ -206,6 +209,30 @@ static void handleTerminalCmd()
       Display::exitIdle();
       server.send(200, "application/json", "{\"response\":\"Pose: " + cmdLower + "\"}");
       return;
+    }
+  }
+
+  // --- Servo angle command (e.g. "R1 90" or "3 45") ---
+  {
+    char servoToken[8];
+    int servoAngle;
+    if (sscanf(cmd.c_str(), "%7s %d", servoToken, &servoAngle) == 2)
+    {
+      String st(servoToken);
+      st.toUpperCase();
+      int idx = servoNameToIndex(st);
+      if (idx < 0)
+      {
+        idx = st.toInt();
+        if (idx == 0 && st != "0")
+          idx = -1;
+      }
+      if (idx >= 0 && idx < SERVO_COUNT)
+      {
+        Motors::setAngle(idx, servoAngle);
+        server.send(200, "application/json", "{\"response\":\"" + ServoNames[idx] + " (" + String(idx) + ") set to " + String(servoAngle) + "\"}");
+        return;
+      }
     }
   }
 
