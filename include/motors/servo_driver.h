@@ -65,4 +65,24 @@ namespace Motors
    * @param angle   Desired angle in degrees (0..180), before subtrim.
    */
   void setAngle(uint8_t channel, int angle);
+
+  /**
+   * @brief Write a servo position immediately (ROS bridge, 50 Hz).
+   *
+   * Non-blocking: no subtrim (applied by the ROS 2 plugin), no delay, no log.
+   * Clamps to [0, 180] and writes the pulse in microseconds, so fractional
+   * degrees are kept (1 µs ≈ 0.08°).
+   *
+   * @param channel Servo index 0..SERVO_COUNT-1. Out-of-range calls ignored.
+   * @param degrees Servo angle in degrees.
+   */
+  void writeDegrees(uint8_t channel, float degrees);
+
+  /**
+   * @brief Last angle written to a servo, in servo degrees.
+   *
+   * Updated by both setAngle() (after subtrim) and writeDegrees(); used for
+   * the ROS echo and as the starting point of the per-tick step limit.
+   */
+  float lastAngle(uint8_t channel);
 } // namespace Motors

@@ -14,6 +14,7 @@
 
 #include "web/web_server.h"
 #include "web/web_assets.h"
+#include "core/mode.h"
 #include "core/config.h"
 #include "core/command_queue.h"
 #include "display/face_engine.h"
@@ -147,6 +148,7 @@ static void handleTerminalCmd()
     resp += "\\nClients: " + String(WiFi.softAPgetStationNum());
     resp += "\\nCommand: " + (currentCommand.length() > 0 ? currentCommand : String("idle"));
     resp += "\nFace: " + Display::getCurrentFaceName();
+    resp += "\\nMode: " + String(Mode::isRos() ? "ROS" : "WEB");
     resp += "\\nHack Lock: " + String(hackLocked ? "ACTIVE" : "off");
     if (hackLocked)
       resp += "\\nOwner: " + hackOwnerIP.toString();
@@ -163,6 +165,7 @@ static void handleTerminalCmd()
     resp += "\\n       pushup, bow, cute, freaky, worm, shake";
     resp += "\\n       shrug, dead, crab";
     resp += "\\nSystem: status, help, hack, muhack";
+    resp += "\\nMode: mode, mode web  (ROS 2 takes over on its first command)";
     resp += "\\nServos: R1 <angle>  (e.g. R1 90)";
     resp += "\\n  R1=hip FR  R2=hip BR  R3=foot FR  R4=foot BR";
     resp += "\\n  L1=hip FL  L2=hip BL  L3=foot FL  L4=foot BL";
@@ -177,6 +180,28 @@ static void handleTerminalCmd()
   if (isHackBlocked())
   {
     server.send(200, "application/json", "{\"response\":\"ACCESS DENIED. Robot is under exclusive control.\\nWait for 'muhack' to be issued.\",\"locked\":true}");
+    return;
+  }
+
+  // --- Mode commands (ROS 2 / web) ---
+  if (cmdLower == "mode")
+  {
+    server.send(200, "application/json", String("{\"response\":\"Mode: ") + (Mode::isRos() ? "ROS" : "WEB") + "\"}");
+    return;
+  }
+  if (cmdLower == "mode web")
+  {
+    if (Mode::requestWeb())
+      server.send(200, "application/json", "{\"response\":\"Mode: WEB. Web poses and servo commands enabled.\"}");
+    else
+      server.send(200, "application/json", "{\"response\":\"ROS 2 is still sending commands.\\nStop it first, then type 'mode web' again.\"}");
+    return;
+  }
+
+  // --- ROS mode: movement is driven by ROS 2 only ---
+  if (Mode::isRos())
+  {
+    server.send(200, "application/json", "{\"response\":\"ROS MODE: movement commands are disabled.\\nType 'mode web' after stopping ROS 2.\"}");
     return;
   }
 

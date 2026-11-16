@@ -1,4 +1,5 @@
 #include "motors/servo_driver.h"
+#include "core/mode.h"
 #include "core/tasks.h"
 
 #include <ESP32Servo.h>
@@ -38,6 +39,9 @@ int8_t subtrim[SERVO_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0};
 /// Servo objects — file-local, accessed only through Motors::setAngle().
 static Servo servos[SERVO_COUNT];
 
+/// Last written angle per servo (servo degrees); read by the ROS bridge task.
+static std::atomic<float> lastDeg[SERVO_COUNT];
+
 // ============================================================================
 // MOTORS NAMESPACE — implementation
 // ============================================================================
@@ -58,6 +62,7 @@ void init()
     servos[i].setPeriodHertz(SERVO_PWM_HZ);
     servos[i].attach(SERVO_PINS[i], SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US);
     servos[i].write(SERVO_INIT_ANGLE);
+    lastDeg[i] = SERVO_INIT_ANGLE;
     delay(SERVO_ATTACH_STAGGER_MS);
   }
 }
@@ -65,6 +70,9 @@ void init()
 void setAngle(uint8_t channel, int angle)
 {
   if (channel >= SERVO_COUNT)
+    return;
+  // ROS mode: servos belong to the ROS bridge; web poses and CLI do not move them.
+  if (Mode::isRos())
     return;
 
   int adjustedAngle = constrain(angle + subtrim[channel], 0, 180);
@@ -77,7 +85,28 @@ void setAngle(uint8_t channel, int angle)
   Serial.println(adjustedAngle);
 
   servos[channel].write(adjustedAngle);
+  lastDeg[channel] = adjustedAngle;
   delayWithFace(motorCurrentDelay); // Phase 5: replace with vTaskDelay
+}
+
+void writeDegrees(uint8_t channel, float degrees)
+{
+  if (channel >= SERVO_COUNT)
+    return;
+  if (degrees < 0.0f)
+    degrees = 0.0f;
+  if (degrees > 180.0f)
+    degrees = 180.0f;
+  const float us = SERVO_PULSE_MIN_US + degrees * (SERVO_PULSE_MAX_US - SERVO_PULSE_MIN_US) / 180.0f;
+  servos[channel].writeMicroseconds(static_cast<int>(us + 0.5f));
+  lastDeg[channel] = degrees;
+}
+
+float lastAngle(uint8_t channel)
+{
+  if (channel >= SERVO_COUNT)
+    return 0.0f;
+  return lastDeg[channel];
 }
 
 } // namespace Motors

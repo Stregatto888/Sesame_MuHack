@@ -16,6 +16,7 @@
 #include "display/face_engine.h"
 #include "motors/servo_driver.h"
 #include "motors/poses.h"
+#include "core/mode.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -123,6 +124,10 @@ static void taskMotor(void *pvParams)
       if (CmdQueue::pop(incoming))
         currentCommand = incoming;
     }
+
+    // --- ROS mode: movement belongs to ROS 2, web and CLI commands are dropped ---
+    if (Mode::isRos())
+      currentCommand = "";
 
     // --- Dispatch active command ---
     if (currentCommand != "")

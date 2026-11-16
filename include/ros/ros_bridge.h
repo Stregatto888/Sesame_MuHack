@@ -8,10 +8,14 @@
 //   ttyACM0 — trasporto micro-ROS verso l'agente sul PC
 //   ttyACM1 — log ESP_LOGx (idf.py monitor --no-reset)
 //
-// Passo 3b: nodo "sesame_esp32" con il solo publisher di prova
-// /sesame/heartbeat (std_msgs/Int32, 1 Hz), riconnessione automatica
-// all'agente e misura della memoria. I topic definitivi arrivano con la
-// decisione 2 del passo 3.
+// Nodo "sesame_esp32" (ROS_DOMAIN_ID 0), QoS best-effort:
+//   /sesame/joint_commands  (sottoscrizione) std_msgs/Float32MultiArray
+//   /sesame/joint_echo      (pubblicazione)  std_msgs/Float32MultiArray, 50 Hz
+// 8 valori in ordine firmware R1, R2, L1, L2, R4, R3, L3, L4, in gradi del
+// servo (conversione da gradi URDF con direzione e subtrim fatta dal plugin).
+//
+// Sicurezze nel firmware: limiti per giunto, passo massimo 12° ogni 20 ms,
+// watchdog 250 ms senza comandi → fermo nella posa corrente.
 // ============================================================================
 
 namespace RosBridge

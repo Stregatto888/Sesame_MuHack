@@ -84,6 +84,24 @@ static const int SERVO_PINS[SERVO_COUNT] = {1, 2, 4, 6, 8, 10, 13, 14};
 #define MAX_FACE_FRAMES 6
 
 // ============================================================================
+// ROS BRIDGE (fase 5) — modalità ROS, comandi da /sesame/joint_commands
+// ============================================================================
+
+/// Joint limits in servo degrees, firmware order (R1, R2, L1, L2, R4, R3, L3, L4).
+/// Same values as the URDF (direction +1, subtrim 0): every ROS command is clamped here.
+static const float JOINT_LIMIT_MIN_DEG[SERVO_COUNT] = {45, 0, 0, 45, 0, 0, 0, 0};
+static const float JOINT_LIMIT_MAX_DEG[SERVO_COUNT] = {180, 135, 135, 180, 180, 180, 180, 180};
+
+/// Control period of the ROS bridge (ms): 50 Hz, same as the joint_trajectory_controllers.
+#define ROS_CONTROL_PERIOD_MS 20
+/// Maximum change per servo and per control tick (degrees): 12° × 50 Hz = 600 °/s.
+#define ROS_MAX_STEP_DEG 12.0f
+/// Watchdog: without a valid command for this long the robot holds its current pose (ms).
+#define ROS_COMMAND_TIMEOUT_MS 250
+/// "mode web" is accepted only if no ROS command arrived for this long (ms).
+#define ROS_IDLE_FOR_WEB_MS 1000
+
+// ============================================================================
 // MISC
 // ============================================================================
 

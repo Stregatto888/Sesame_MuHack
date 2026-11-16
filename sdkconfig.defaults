@@ -15,6 +15,10 @@ CONFIG_FREERTOS_HZ=1000
 # PSRAM integrata da 2 MB (come le librerie Arduino precompilate per la S2)
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+# Allocazioni da 4 KB in su in PSRAM (default 16 KB): la RAM interna resta a WiFi, TinyUSB e stack
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Buffer di WiFi e lwIP anche in PSRAM: servire la pagina web portava la RAM interna a 8 KB
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
 # Ottimizzazione per dimensione (come Arduino) e avvisi -Wall non bloccanti oltre il default di IDF 5.5
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
