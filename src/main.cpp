@@ -64,6 +64,7 @@
 #include "motors/servo_driver.h"
 #include "motors/poses.h"
 #include "web/web_server.h"
+#include "ros/ros_bridge.h"
 
 // ============================================================================
 // PERIPHERAL INSTANCES
@@ -269,6 +270,9 @@ void setup()
   // exists before TaskMotor starts popping.
   CmdQueue::init();
   Tasks::startAll();
+
+  // Fase 5: log su USB CDC (ttyACM1), trasporto micro-ROS (ttyACM0) e TaskRos.
+  RosBridge::start();
 }
 
 /**

@@ -10,3 +10,7 @@
 [submodule "components/adafruit_ssd1306/Adafruit_SSD1306"]
 	path = components/adafruit_ssd1306/Adafruit_SSD1306
 	url = https://github.com/adafruit/Adafruit_SSD1306.git
+[submodule "components/micro_ros_espidf_component"]
+	path = components/micro_ros_espidf_component
+	url = https://github.com/micro-ROS/micro_ros_espidf_component.git
+	branch = jazzy
