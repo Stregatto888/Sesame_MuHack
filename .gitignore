@@ -4,3 +4,9 @@
 .vscode/launch.json
 .vscode/ipch
 CazziMiei/
+
+# Build ESP-IDF (idf.py nel container sesame_idf)
+build/
+managed_components/
+sdkconfig
+sdkconfig.old

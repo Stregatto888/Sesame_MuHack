@@ -1,0 +1,24 @@
+# Sesame MuHack — ESP-IDF 5.5 + Arduino come componente, Lolin S2 Mini (ESP32-S2FNR2)
+
+# Scheda: 4 MB di flash
+CONFIG_IDF_TARGET="esp32s2"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Partizioni come huge_app.csv della build PlatformIO (app da 3 MB)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Arduino come componente: setup()/loop() avviati da Arduino, tick a 1000 Hz (obbligatorio)
+CONFIG_AUTOSTART_ARDUINO=y
+CONFIG_FREERTOS_HZ=1000
+
+# PSRAM integrata da 2 MB (come le librerie Arduino precompilate per la S2)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+# Ottimizzazione per dimensione (come Arduino) e avvisi -Wall non bloccanti oltre il default di IDF 5.5
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_COMPILER_DISABLE_DEFAULT_ERRORS=y
+
+# La USB nativa non è usata da Arduino (ARDUINO_USB_CDC_ON_BOOT non definito: Serial = UART0).
+# Sarà riservata al trasporto micro-ROS nel passo 3b.

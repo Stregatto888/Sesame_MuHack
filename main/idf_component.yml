@@ -1,0 +1,4 @@
+## Dipendenze dal registro ESP (versioni fissate; le transitive finiscono in dependencies.lock)
+dependencies:
+  idf: ">=5.5,<5.6"
+  espressif/arduino-esp32: "==3.3.12"

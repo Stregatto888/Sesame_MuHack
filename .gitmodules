@@ -1,0 +1,12 @@
+[submodule "components/esp32servo/ESP32Servo"]
+	path = components/esp32servo/ESP32Servo
+	url = https://github.com/madhephaestus/ESP32Servo.git
+[submodule "components/adafruit_busio/Adafruit_BusIO"]
+	path = components/adafruit_busio/Adafruit_BusIO
+	url = https://github.com/adafruit/Adafruit_BusIO.git
+[submodule "components/adafruit_gfx/Adafruit-GFX-Library"]
+	path = components/adafruit_gfx/Adafruit-GFX-Library
+	url = https://github.com/adafruit/Adafruit-GFX-Library.git
+[submodule "components/adafruit_ssd1306/Adafruit_SSD1306"]
+	path = components/adafruit_ssd1306/Adafruit_SSD1306
+	url = https://github.com/adafruit/Adafruit_SSD1306.git
