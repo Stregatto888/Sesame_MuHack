@@ -87,10 +87,18 @@ static const int SERVO_PINS[SERVO_COUNT] = {1, 2, 4, 6, 8, 10, 13, 14};
 // ROS BRIDGE (fase 5) — modalità ROS, comandi da /sesame/joint_commands
 // ============================================================================
 
-/// Joint limits in servo degrees, firmware order (R1, R2, L1, L2, R4, R3, L3, L4).
-/// Same values as the URDF (direction +1, subtrim 0): every ROS command is clamped here.
+/// Joint limits in URDF degrees, firmware order (R1, R2, L1, L2, R4, R3, L3, L4).
+/// Same values as the URDF and calibration/default.yaml.
 static const float JOINT_LIMIT_MIN_DEG[SERVO_COUNT] = {45, 0, 0, 45, 0, 0, 0, 0};
 static const float JOINT_LIMIT_MAX_DEG[SERVO_COUNT] = {180, 135, 135, 180, 180, 180, 180, 180};
+/// ROS commands arrive in servo degrees, with the subtrim already added by the ROS 2 plugin:
+/// each command is clamped to the URDF limits widened by this margin (degrees), and to the
+/// servo range 0-180. Same value as maximum_subtrim_degrees in calibration/default.yaml
+/// (25-tooth horn: 14.4° per tooth, so any offset fits in ±7.2° after remounting).
+#define ROS_LIMIT_MARGIN_DEG 8.0f
+/// Servo range in degrees (pulse SERVO_PULSE_MIN_US..SERVO_PULSE_MAX_US).
+#define SERVO_RANGE_MIN_DEG 0.0f
+#define SERVO_RANGE_MAX_DEG 180.0f
 
 /// Control period of the ROS bridge (ms): 50 Hz, same as the joint_trajectory_controllers.
 #define ROS_CONTROL_PERIOD_MS 20

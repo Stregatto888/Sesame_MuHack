@@ -5,7 +5,8 @@
 //    log) e la porta CDC resta aperta tra una sessione e l'altra.
 //  - ttyACM1: log ESP_LOGx
 //  - TaskRos, ciclo a 50 Hz:
-//      * comandi da /sesame/joint_commands → limiti per giunto → passo
+//      * comandi da /sesame/joint_commands → limiti per giunto (URDF ± margine
+//        del subtrim, dentro 0-180) → passo
 //        massimo 12° per ciclo → Motors::writeDegrees()
 //      * watchdog 250 ms senza comandi validi → fermo nella posa corrente
 //      * eco degli angoli scritti su /sesame/joint_echo
@@ -19,6 +20,7 @@
 #include "core/mode.h"
 #include "motors/servo_driver.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "esp_heap_caps.h"
@@ -166,9 +168,12 @@ void commandCallback(const void *msgIn)
   bool clamped = false;
   for (int i = 0; i < SERVO_COUNT; i++)
   {
-    float value = msg->data.data[i];
-    if (value < JOINT_LIMIT_MIN_DEG[i]) { value = JOINT_LIMIT_MIN_DEG[i]; clamped = true; }
-    if (value > JOINT_LIMIT_MAX_DEG[i]) { value = JOINT_LIMIT_MAX_DEG[i]; clamped = true; }
+    // Limiti URDF allargati del margine del subtrim, poi campo del servo.
+    const float low  = std::max(JOINT_LIMIT_MIN_DEG[i] - ROS_LIMIT_MARGIN_DEG, SERVO_RANGE_MIN_DEG);
+    const float high = std::min(JOINT_LIMIT_MAX_DEG[i] + ROS_LIMIT_MARGIN_DEG, SERVO_RANGE_MAX_DEG);
+    float value      = msg->data.data[i];
+    if (value < low) { value = low; clamped = true; }
+    if (value > high) { value = high; clamped = true; }
     target[i] = value;
   }
   if (clamped)
